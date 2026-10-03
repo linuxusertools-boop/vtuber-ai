@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "AI VTuber"
+version = "1.0.0"
+id = "artifacts/ai-vtuber"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22926
+
+[services.development]
+run = "pnpm --filter @workspace/ai-vtuber run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ai-vtuber", "run", "build" ]
+publicDir = "artifacts/ai-vtuber/dist"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22926"
+BASE_PATH = "/"
