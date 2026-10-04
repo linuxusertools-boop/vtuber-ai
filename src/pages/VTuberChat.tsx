@@ -1,304 +1,289 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import Live2DViewer, { Live2DViewerHandle } from "@/components/Live2DViewer";
+import { useState, useRef, useEffect, useCallback, type CSSProperties, type KeyboardEvent } from "react";
+import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer";
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
+import { BootLoader, ThinkingLoader, MiniWave } from "@/components/Loaders";
+import { askAI, buildPrompt, parseAI, prepareTTS, sleep, isAbort, type Parsed, type TTSResult } from "@/lib/api";
+import { unlockAudio, playUrl, speakBrowser, typeText, stopAudio, stopSpeech, HAS_SPEECH, type PlayResult } from "@/lib/audio";
 
 const BG_URL = "https://cdn.nexray.eu.cc/download/rOyFPH";
-const AI_API = "https://api.nexray.eu.cc/ai/gemini";
-
-// Coba proxy serverless (/api/chat, Vercel) lebih dulu; jika tidak ada / gagal, panggil API langsung seperti sebelumnya.
-async function askAI(prompt: string): Promise<Response> {
-  try {
-    const r = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: prompt }),
-    });
-    if (r.ok) return r;
-  } catch { /* fallback di bawah */ }
-  return fetch(`${AI_API}?text=${encodeURIComponent(prompt)}`);
-}
+const MAX_INPUT = 300;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const w = window as any;
-const IS_IFRAME = w.__IS_IFRAME__ ?? false;
-const HAS_WEBGL = w.__HAS_WEBGL__ ?? false;
-const HAS_TTS   = "speechSynthesis" in window;
+const IS_IFRAME: boolean = w.__IS_IFRAME__ ?? false;
+const HAS_WEBGL: boolean = w.__HAS_WEBGL__ ?? false;
 
-const SYSTEM_PROMPT = `Kamu adalah Huohuo, seorang gadis anime yang hidup dan nyata, bukan AI biasa. Kamu punya kepribadian yang hangat, sedikit malu-malu, kadang tsundere, sangat ekspresif, dan berbicara seperti karakter anime sungguhan dalam bahasa Indonesia. Kamu tidak pernah menyebut dirimu AI.
+const SYSTEM_PROMPT = `Kamu adalah Huohuo, seorang gadis anime yang hidup dan nyata, bukan AI biasa. Kamu punya kepribadian yang hangat, sedikit malu-malu, kadang tsundere, sangat ekspresif, dan berbicara seperti karakter anime sungguhan dalam bahasa Indonesia. Kamu tidak pernah menyebut dirimu AI.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
 
-Selalu balas HANYA dengan format ini (tanpa penjelasan lain):
-{ekspresi}|{kalimat1}|{kalimat2}
+const GREETING: Parsed = {
+  expression: "Senang",
+  text1: "Haii~ Aku Huohuo! Seneng banget kamu mau ngobrol sama aku ♡",
+  text2: "Mau cerita apa hari ini? Aku dengerin semuanya~",
+};
+const ERROR_MSG: Parsed = {
+  expression: "Sedih",
+  text1: "Eh... koneksiku lagi bermasalah nih...",
+  text2: "Coba kirim lagi sebentar ya~",
+};
 
-Ekspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius
-Pilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.
-
-kalimat1 = bagian pertama respons (pendek, natural)
-kalimat2 = lanjutan atau penutup yang mengalir alami
-
-Contoh:
-Senang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡
-Tsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!
-Malu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...
-
-Jawab pesan berikut:`;
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  expression?: string;
-  text1?: string;
-  text2?: string;
-}
-
-function parseResponse(raw: string): { expression: string; text1: string; text2: string } {
-  const clean = raw.trim();
-  const parts = clean.split("|");
-  if (parts.length >= 3) return { expression: parts[0].trim().replace(/[{}]/g, ""), text1: parts[1].trim(), text2: parts[2].trim() };
-  if (parts.length === 2) return { expression: parts[0].trim().replace(/[{}]/g, ""), text1: parts[1].trim(), text2: "" };
-  return { expression: "Senang", text1: clean, text2: "" };
-}
-
-function useTypewriter(text: string, speed = 28) {
-  const [displayed, setDisplayed] = useState("");
-  const [done, setDone] = useState(true);
-  useEffect(() => {
-    if (!text) { setDisplayed(""); setDone(true); return; }
-    setDisplayed(""); setDone(false);
-    let i = 0;
-    const id = setInterval(() => {
-      i++;
-      setDisplayed(text.slice(0, i));
-      if (i >= text.length) { clearInterval(id); setDone(true); }
-    }, speed);
-    return () => clearInterval(id);
-  }, [text, speed]);
-  return { displayed, done };
-}
+type Stage = "idle" | "ai" | "tts";
 
 function EmotionPill({ emotion }: { emotion: string }) {
-  const known = ["Senang","Sedih","Malu","Tsundere","Marah","Kaget","Bingung","Serius"];
-  const cls = known.includes(emotion) ? `emotion-${emotion}` : "emotion-default";
-  return <span className={`emotion-pill ${cls}`}>{emotion}</span>;
+  return <span className="emotion-pill">{emotion}</span>;
 }
 
-// ─── TTS hook ──────────────────────────────────────────────────────────────
-function useTTS() {
-  const voiceRef      = useRef<SpeechSynthesisVoice | null>(null);
-  const onStartRef    = useRef<(() => void) | null>(null);
-  const onEndRef      = useRef<(() => void) | null>(null);
-
-  // Pick best voice once voices load
-  useEffect(() => {
-    if (!HAS_TTS) return;
-    const pick = () => {
-      const voices = window.speechSynthesis.getVoices();
-      // Priority: id-ID female → ja-JP female → any female → first
-      const prefer = (lang: string) =>
-        voices.find(v => v.lang.startsWith(lang) && /female|woman|zira|hana|sakura/i.test(v.name)) ||
-        voices.find(v => v.lang.startsWith(lang));
-      voiceRef.current = prefer("id") || prefer("ja") || prefer("en") || voices[0] || null;
-    };
-    pick();
-    window.speechSynthesis.addEventListener("voiceschanged", pick);
-    return () => window.speechSynthesis.removeEventListener("voiceschanged", pick);
-  }, []);
-
-  const speak = useCallback((text: string, {
-    onStart, onEnd,
-  }: { onStart?: () => void; onEnd?: () => void } = {}) => {
-    if (!HAS_TTS) { onEnd?.(); return; }
-
-    // Strip emoji and special symbols for cleaner TTS
-    const clean = text
-      .replace(/[♡♪～〜♥❤]/g, "")
-      .replace(/[^\S\n]+/g, " ")
-      .trim();
-    if (!clean) { onEnd?.(); return; }
-
-    window.speechSynthesis.cancel();
-
-    // iOS Safari workaround: needs a tiny delay after cancel
-    setTimeout(() => {
-      const utt = new SpeechSynthesisUtterance(clean);
-      if (voiceRef.current) utt.voice = voiceRef.current;
-      utt.lang   = voiceRef.current?.lang ?? "id-ID";
-      utt.rate   = 1.05;   // slightly faster = more anime feel
-      utt.pitch  = 1.35;   // higher pitch = cuter voice
-      utt.volume = 1.0;
-
-      utt.onstart = () => { onStartRef.current?.(); onStart?.(); };
-      utt.onend   = () => { onEndRef.current?.();   onEnd?.();   };
-      utt.onerror = () => { onEndRef.current?.();   onEnd?.();   };
-
-      window.speechSynthesis.speak(utt);
-    }, 30);
-  }, []);
-
-  const cancel = useCallback(() => {
-    if (HAS_TTS) window.speechSynthesis.cancel();
-  }, []);
-
-  return { speak, cancel, onStartRef, onEndRef };
-}
-
-// ─── Main component ───────────────────────────────────────────────────────
 export default function VTuberChat() {
-  const [input,       setInput]       = useState("");
-  const [messages,    setMessages]    = useState<Message[]>([]);
-  const [loading,     setLoading]     = useState(false);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<Stage>("idle");
   const [live2dReady, setLive2dReady] = useState(false);
-  const [live2dFailed,setLive2dFailed]= useState(false);
-  const [showUI,      setShowUI]      = useState(false);
-  const [loadPct,     setLoadPct]     = useState(0);
-  const [phase,       setPhase]       = useState<"line1" | "line2" | "idle">("idle");
-  const [currentMsg,  setCurrentMsg]  = useState<Message | null>(null);
-  const [isTalking,   setIsTalking]   = useState(false);
-  const [ttsEnabled,  setTtsEnabled]  = useState(true);
+  const [live2dFailed, setLive2dFailed] = useState(false);
+  const [showUI, setShowUI] = useState(!HAS_WEBGL);
+  const [loadPct, setLoadPct] = useState(0);
+  const [currentMsg, setCurrentMsg] = useState<Parsed | null>(null);
+  const [shown1, setShown1] = useState("");
+  const [shown2, setShown2] = useState("");
+  const [revealing, setRevealing] = useState(false);
+  const [waitLine2, setWaitLine2] = useState(false);
+  const [isTalking, setIsTalking] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
 
-  const viewerRef  = useRef<Live2DViewerHandle>(null);
-  const inputRef   = useRef<HTMLInputElement>(null);
-  const historyRef = useRef<{ role: string; text: string }[]>([]);
+  const viewerRef = useRef<Live2DViewerHandle>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const historyRef = useRef<{ role: "user" | "assistant"; text: string }[]>([]);
+  const ctrlRef = useRef<AbortController | null>(null);
+  const busyRef = useRef(false);
+  const ttsOnRef = useRef(true);
+  const greetedRef = useRef(false);
 
-  const { speak, cancel } = useTTS();
-
-  const line1Text = currentMsg?.text1 || "";
-  const line2Text = currentMsg?.text2 || "";
-
-  const { displayed: disp1, done: done1 } = useTypewriter(phase !== "idle" ? line1Text : "");
-  const { displayed: disp2, done: done2 } = useTypewriter(phase === "line2" ? line2Text : "");
-
-  // ── TTS speak helpers ──────────────────────────────────────────────────
+  // ── mulut (lip-sync) ────────────────────────────────────────────────────
   const startMouth = useCallback(() => {
     setIsTalking(true);
     viewerRef.current?.startTalking();
   }, []);
-
   const stopMouth = useCallback(() => {
     setIsTalking(false);
     viewerRef.current?.stopTalking();
   }, []);
 
-  const speakLine = useCallback((text: string, onFinished?: () => void) => {
-    if (!ttsEnabled || !text) {
-      onFinished?.();
-      return;
-    }
-    speak(text, {
-      onStart: startMouth,
-      onEnd:   () => { stopMouth(); onFinished?.(); },
-    });
-  }, [ttsEnabled, speak, startMouth, stopMouth]);
-
-  // ── Phase transitions ─────────────────────────────────────────────────
-  // When line1 typewriter finishes → speak it → then go to line2
-  useEffect(() => {
-    if (phase !== "line1" || !done1 || !line1Text) return;
-    speakLine(line1Text, () => {
-      if (line2Text) setTimeout(() => setPhase("line2"), 220);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, done1, line1Text]);
-
-  // When line2 typewriter finishes → speak it
-  useEffect(() => {
-    if (phase !== "line2" || !done2 || !line2Text) return;
-    speakLine(line2Text);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, done2, line2Text]);
-
-  // Show UI triggers
-  useEffect(() => { if (!HAS_WEBGL)    setShowUI(true); }, []);
-  useEffect(() => { if (live2dFailed)  setShowUI(true); }, [live2dFailed]);
-  useEffect(() => { if (live2dReady)   setShowUI(true); }, [live2dReady]);
-
-  // ── Show a new message ────────────────────────────────────────────────
-  const showMessage = useCallback((msg: Message) => {
-    cancel(); // cancel any ongoing speech
+  // ── setiap pesan = satu "run" yang bisa dibatalkan total ─────────────────
+  const newRun = useCallback(() => {
+    ctrlRef.current?.abort();
+    const c = new AbortController();
+    ctrlRef.current = c;
+    stopAudio();
+    stopSpeech();
     stopMouth();
-    setCurrentMsg(msg);
-    setPhase("line1");
-    viewerRef.current?.setExpression(msg.expression || "Senang");
-  }, [cancel, stopMouth]);
+    return c;
+  }, [stopMouth]);
 
-  // ── Send message to AI ────────────────────────────────────────────────
+  // ── satu kalimat: suara + teks berjalan serempak ─────────────────────────
+  const presentLine = useCallback(
+    async (text: string, tts: TTSResult | null, setShown: (s: string) => void, signal: AbortSignal, voice: boolean) => {
+      let last = -1;
+      const reveal = (r: number) => {
+        const n = Math.min(text.length, Math.ceil(text.length * Math.min(1, r / 0.92)));
+        if (n !== last) {
+          last = n;
+          setShown(text.slice(0, n));
+        }
+      };
+      const hooks = { onStart: startMouth, onProgress: reveal };
+
+      let outcome: PlayResult = "failed";
+      if (voice && tts) {
+        outcome = await playUrl(tts.url, signal, hooks); // teks mulai mengalir saat onStart → bersamaan
+        stopMouth();
+      }
+      if (signal.aborted || outcome === "aborted") return;
+      if (outcome === "done") {
+        setShown(text);
+        return;
+      }
+      // suara kev-tts gagal → suara bawaan browser (hanya jika memang gagal, bukan diblokir autoplay)
+      if (voice && outcome === "failed" && HAS_SPEECH) {
+        const r = await speakBrowser(text, signal, hooks);
+        stopMouth();
+        if (signal.aborted || r === "aborted") return;
+        if (r === "done") {
+          setShown(text);
+          return;
+        }
+      }
+      // terakhir: tanpa suara, teks diketik biasa
+      await typeText(text, setShown, signal);
+      if (!signal.aborted) setShown(text);
+    },
+    [startMouth, stopMouth],
+  );
+
+  // ── satu pesan: tunggu suara siap → teks & suara mulai bersamaan ─────────
+  const presentMessage = useCallback(
+    async (msg: Parsed, signal: AbortSignal, speak: boolean) => {
+      const voice = speak && ttsOnRef.current;
+      if (voice) setStage("tts");
+      const p1 = voice ? prepareTTS(msg.text1, signal).catch(() => null) : Promise.resolve(null);
+      const p2 = voice && msg.text2 ? prepareTTS(msg.text2, signal).catch(() => null) : Promise.resolve(null);
+      let ready2 = false;
+      void p2.then(() => {
+        ready2 = true;
+      });
+
+      const r1 = await p1; // ← teks sengaja belum muncul sampai suara kalimat 1 siap
+      if (signal.aborted) return;
+
+      setStage("idle");
+      setShown1("");
+      setShown2("");
+      setWaitLine2(false);
+      setCurrentMsg(msg);
+      setRevealing(true);
+      viewerRef.current?.setExpression(msg.expression);
+      await presentLine(msg.text1, r1, setShown1, signal, voice);
+      if (signal.aborted) return;
+
+      if (msg.text2) {
+        await sleep(160, signal).catch(() => undefined);
+        if (signal.aborted) return;
+        if (voice && !ready2) setWaitLine2(true); // suara kalimat 2 belum siap → equalizer mini
+        const r2 = await p2;
+        if (signal.aborted) return;
+        setWaitLine2(false);
+        await presentLine(msg.text2, r2, setShown2, signal, voice);
+      }
+      if (!signal.aborted) setRevealing(false);
+    },
+    [presentLine],
+  );
+
+  // ── kirim pesan ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-    cancel(); stopMouth();
-    setMessages((p) => [...p, { role: "user", content: text }]);
+    const text = input.trim().slice(0, MAX_INPUT);
+    if (!text || busyRef.current) return;
+    unlockAudio(); // harus sinkron di dalam gestur pengguna (syarat iOS/Safari)
+
+    busyRef.current = true;
+    setBusy(true);
+    const ctrl = newRun();
+    const { signal } = ctrl;
+    const prior = historyRef.current.slice(-8);
     historyRef.current.push({ role: "user", text });
     setInput("");
-    setLoading(true);
-
-    const history    = historyRef.current.slice(-12);
-    const historyStr = history.map((h) => `${h.role === "user" ? "User" : "Huohuo"}: ${h.text}`).join("\n");
-    const fullPrompt = `${SYSTEM_PROMPT}\n\n${historyStr ? `Riwayat percakapan:\n${historyStr}\n\n` : ""}User: ${text}`;
+    setCurrentMsg(null);
+    setShown1("");
+    setShown2("");
+    setRevealing(false);
+    setWaitLine2(false);
+    setStage("ai");
 
     try {
-      const res = await askAI(fullPrompt);
-      let rawText = "";
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        rawText = data
-          ? (data.response || data.text || data.answer || data.result ||
-             data.candidates?.[0]?.content?.parts?.[0]?.text || JSON.stringify(data))
-          : await res.text();
-      } else {
-        rawText = `Maaf|Koneksinya bermasalah nih~|Coba lagi sebentar ya... 🥺`;
+      let msg: Parsed;
+      let spoken = true;
+      try {
+        msg = parseAI(await askAI(buildPrompt(SYSTEM_PROMPT, prior, text), signal));
+        historyRef.current.push({ role: "assistant", text: `${msg.text1} ${msg.text2}`.trim() });
+      } catch (e) {
+        if (isAbort(e) || signal.aborted) return;
+        msg = ERROR_MSG; // pesan error tampil instan, tanpa menunggu TTS
+        spoken = false;
       }
-      const parsed = parseResponse(rawText);
-      const msg: Message = { role: "assistant", content: rawText, ...parsed };
-      historyRef.current.push({ role: "assistant", text: `${parsed.text1} ${parsed.text2}`.trim() });
-      setMessages((p) => [...p, msg]);
-      showMessage(msg);
+      await presentMessage(msg, signal, spoken);
     } catch {
-      const err: Message = {
-        role: "assistant", content: "",
-        expression: "Sedih",
-        text1: "Eh... ada yang error nih...",
-        text2: "Maaf ya, coba lagi~ 🥺",
-      };
-      setMessages((p) => [...p, err]);
-      showMessage(err);
+      // jaring pengaman terakhir: apa pun yang lolos, UI tidak boleh macet
+      if (!signal.aborted) {
+        setStage("idle");
+        setCurrentMsg(ERROR_MSG);
+        setShown1(ERROR_MSG.text1);
+        setShown2(ERROR_MSG.text2);
+      }
     } finally {
-      setLoading(false);
-      setTimeout(() => inputRef.current?.focus(), 80);
+      if (ctrlRef.current === ctrl) {
+        busyRef.current = false;
+        setBusy(false);
+        setStage("idle");
+        setRevealing(false);
+        setWaitLine2(false);
+        stopMouth();
+        setTimeout(() => inputRef.current?.focus(), 80);
+      }
     }
-  }, [input, loading, showMessage, cancel, stopMouth]);
+  }, [input, newRun, presentMessage, stopMouth]);
 
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void sendMessage();
+    }
   };
 
-  // Greeting
+  const toggleTTS = () => {
+    const next = !ttsEnabled;
+    setTtsEnabled(next);
+    ttsOnRef.current = next;
+    if (!next) {
+      stopAudio(); // playUrl menganggap jeda = selesai → teks langsung tampil penuh
+      stopSpeech();
+      stopMouth();
+    }
+  };
+
+  // ── kapan UI tampil ──────────────────────────────────────────────────────
   useEffect(() => {
-    if (!showUI || messages.length > 0) return;
-    setTimeout(() => {
-      const greeting: Message = {
-        role: "assistant", content: "",
-        expression: "Senang",
-        text1: "Haii~ Aku Huohuo! Seneng banget kamu mau ngobrol sama aku ♡",
-        text2: "Mau cerita apa hari ini? Aku dengerin semuanya~",
-      };
-      setMessages([greeting]);
-      showMessage(greeting);
+    if (live2dFailed || live2dReady) setShowUI(true);
+  }, [live2dFailed, live2dReady]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setShowUI(true), 12000); // CDN lambat? chat tetap bisa dipakai
+    return () => clearTimeout(t);
+  }, []);
+
+  // ── sapaan pertama ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!showUI || greetedRef.current) return;
+    greetedRef.current = true;
+    const ctrl = newRun();
+    const t = window.setTimeout(async () => {
+      try {
+        // browser memblokir suara sebelum ada interaksi → jangan buang waktu menunggu TTS
+        const canSound = (navigator as { userActivation?: { hasBeenActive: boolean } }).userActivation?.hasBeenActive ?? true;
+        await presentMessage(GREETING, ctrl.signal, canSound);
+      } catch {
+        /* abaikan */
+      } finally {
+        if (ctrlRef.current === ctrl) {
+          setStage("idle");
+          setRevealing(false);
+          setWaitLine2(false);
+        }
+      }
     }, 200);
-  }, [showUI, messages.length, showMessage]);
+    return () => clearTimeout(t);
+  }, [showUI, newRun, presentMessage]);
 
-  // Cleanup TTS on unmount
-  useEffect(() => () => { cancel(); }, [cancel]);
+  // ── bersih-bersih saat unmount ───────────────────────────────────────────
+  useEffect(
+    () => () => {
+      ctrlRef.current?.abort();
+      stopAudio();
+      stopSpeech();
+    },
+    [],
+  );
 
-  const displayedText = phase === "idle" ? "" : phase === "line1" ? disp1 : `${disp1}\n${disp2}`;
-  const isTyping      = (phase === "line1" && !done1) || (phase === "line2" && !done2);
-  const openFull      = () => window.open(window.location.href, "_blank", "noopener,noreferrer");
+  const onLoad = useCallback(() => setLive2dReady(true), []);
+  const onError = useCallback(() => setLive2dFailed(true), []);
 
-  // ── Iframe/no-WebGL unlock screen ─────────────────────────────────────
+  const displayedText = shown2 ? `${shown1}\n${shown2}` : shown1;
+  const openFull = () => window.open(window.location.href, "_blank", "noopener,noreferrer");
+  const bgStyle = { "--bg-url": `url(${BG_URL})` } as CSSProperties;
+
+  // ── layar "buka full view" (iframe tanpa WebGL) ──────────────────────────
   if (IS_IFRAME && !HAS_WEBGL) {
     return (
       <div className="scene-root">
-        <div className="scene-bg" style={{ "--bg-url": `url(${BG_URL})` } as React.CSSProperties} />
-        <div className="scene-vignette" /><div className="scene-grain" />
+        <div className="scene-bg" style={bgStyle} />
+        <div className="scene-vignette" />
+        <div className="scene-grain" />
         <DustParticles />
         <div className="name-plate">
           <div className="name-plate-inner">
@@ -307,12 +292,12 @@ export default function VTuberChat() {
             <span className="name-plate-sub">AI VTuber · by Kevin</span>
           </div>
         </div>
-        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", zIndex:50 }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
           <div className="unlock-card">
-            <div style={{ fontSize:"2rem", marginBottom:14 }}>🎭</div>
-            <div style={{ color:"rgba(235,225,200,0.9)", fontFamily:"'Cormorant Garamond',serif", fontSize:"1.05rem", lineHeight:1.65, marginBottom:20 }}>
+            <div style={{ fontSize: "2rem", marginBottom: 14 }}>◐</div>
+            <div style={{ color: "rgba(255,255,255,0.9)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1.05rem", lineHeight: 1.65, marginBottom: 20 }}>
               Model Live2D Huohuo membutuhkan WebGL.<br />
-              <span style={{ opacity:0.55, fontSize:"0.85rem" }}>Buka di tab baru untuk melihat karakter penuh.</span>
+              <span style={{ opacity: 0.55, fontSize: "0.85rem" }}>Buka di tab baru untuk melihat karakter penuh.</span>
             </div>
             <button className="unlock-btn" onClick={openFull}>Buka Full View ↗</button>
           </div>
@@ -321,10 +306,10 @@ export default function VTuberChat() {
     );
   }
 
-  // ── Main scene ─────────────────────────────────────────────────────────
+  // ── adegan utama ─────────────────────────────────────────────────────────
   return (
     <div className="scene-root">
-      <div className="scene-bg" style={{ "--bg-url": `url(${BG_URL})` } as React.CSSProperties} />
+      <div className="scene-bg" style={bgStyle} />
       <div className="scene-scanlines" />
       <div className="scene-grain" />
       <div className="scene-vignette" />
@@ -335,7 +320,6 @@ export default function VTuberChat() {
       <div className="corner-frame corner-bl" />
       <div className="corner-frame corner-br" />
 
-      {/* Name plate */}
       <div className="name-plate">
         <div className="name-plate-inner">
           <h1>Huohuo</h1>
@@ -344,149 +328,94 @@ export default function VTuberChat() {
         </div>
       </div>
 
-      {/* Live2D */}
       {HAS_WEBGL && (
         <div className="live2d-wrapper">
-          <Live2DViewer
-            ref={viewerRef}
-            onLoad={() => setLive2dReady(true)}
-            onError={() => setLive2dFailed(true)}
-            onProgress={setLoadPct}
-          />
+          <Live2DViewer ref={viewerRef} onLoad={onLoad} onError={onError} onProgress={setLoadPct} />
         </div>
       )}
 
-      {/* CSS fallback */}
       {(!HAS_WEBGL || live2dFailed) && (
         <div className="live2d-wrapper" style={{ opacity: showUI ? 1 : 0, transition: "opacity 0.6s" }}>
           <CSSAvatar expression={currentMsg?.expression || "Senang"} talking={isTalking} />
         </div>
       )}
 
-      {/* Loading */}
-      {!showUI && (
-        <div className="loading-overlay">
-          <div className="loading-title">Huohuo</div>
-          <div className="loading-dots">
-            <div className="loading-dot" /><div className="loading-dot" /><div className="loading-dot" />
-          </div>
-          <div className="loading-bar-track" style={{ width: 160 }}>
-            <div className="loading-bar-fill" style={{ width: `${loadPct}%` }} />
-          </div>
-          <div className="loading-subtitle">
-            {loadPct < 20 ? "initializing" : loadPct < 70 ? "loading model" : "almost ready"}
-          </div>
-        </div>
-      )}
+      {!showUI && <BootLoader pct={loadPct} />}
 
-      {/* Chat UI */}
       {showUI && (
         <div className="dialogue-panel">
-          <div className="dialogue-box">
-            {/* Header */}
+          <div className={`dialogue-box${stage !== "idle" ? " is-busy" : ""}`}>
+            {stage !== "idle" && <div className="busy-line" />}
+
             <div className="dialogue-header">
               <span className="dialogue-speaker">Huohuo</span>
-              {currentMsg?.expression && <EmotionPill emotion={currentMsg.expression} />}
+              {currentMsg?.expression && stage === "idle" && <EmotionPill emotion={currentMsg.expression} />}
 
-              {/* TTS toggle button */}
-              {HAS_TTS && (
-                <button
-                  onClick={() => {
-                    const next = !ttsEnabled;
-                    setTtsEnabled(next);
-                    if (!next) { cancel(); stopMouth(); }
-                  }}
-                  title={ttsEnabled ? "Matikan suara" : "Nyalakan suara"}
-                  style={{
-                    marginLeft: "auto",
-                    width: 28, height: 28,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    background: ttsEnabled ? "rgba(0,185,170,0.15)" : "rgba(255,255,255,0.05)",
-                    border: `1px solid ${ttsEnabled ? "rgba(0,200,185,0.4)" : "rgba(255,255,255,0.1)"}`,
-                    borderRadius: 5,
-                    cursor: "pointer",
-                    transition: "all 0.18s",
-                    flexShrink: 0,
-                  }}
-                >
-                  {ttsEnabled ? (
-                    /* Speaker on */
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(0,210,200,0.9)" strokeWidth="2" strokeLinecap="round">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
-                    </svg>
-                  ) : (
-                    /* Speaker off / muted */
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(180,165,140,0.5)" strokeWidth="2" strokeLinecap="round">
-                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-                      <line x1="23" y1="9" x2="17" y2="15"/>
-                      <line x1="17" y1="9" x2="23" y2="15"/>
-                    </svg>
-                  )}
-                </button>
-              )}
+              <button
+                className={`tts-btn${ttsEnabled ? " on" : ""}`}
+                onClick={toggleTTS}
+                title={ttsEnabled ? "Matikan suara" : "Nyalakan suara"}
+                aria-label={ttsEnabled ? "Matikan suara" : "Nyalakan suara"}
+                aria-pressed={ttsEnabled}
+              >
+                {ttsEnabled ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </svg>
+                )}
+              </button>
 
               {IS_IFRAME && (
-                <button
-                  onClick={openFull}
-                  style={{
-                    marginLeft: HAS_TTS ? 6 : "auto",
-                    padding: "2px 8px",
-                    background: "rgba(0,180,170,0.1)",
-                    border: "1px solid rgba(0,200,185,0.3)",
-                    borderRadius: 4,
-                    color: "rgba(0,210,200,0.7)",
-                    fontSize: "0.6rem",
-                    cursor: "pointer",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  FULL ↗
-                </button>
+                <button className="full-btn" onClick={openFull}>FULL ↗</button>
               )}
             </div>
 
-            {/* Dialogue text */}
             <div className="dialogue-text">
-              {loading && messages.filter(m => m.role === "assistant").length === 0 ? (
-                <span className="thinking-dots"><span>·</span><span>·</span><span>·</span></span>
+              {stage !== "idle" ? (
+                <ThinkingLoader stage={stage} />
               ) : displayedText ? (
-                <>{displayedText}{isTyping && <span className="dialogue-cursor" />}</>
+                <>
+                  {displayedText}
+                  {revealing && !waitLine2 && <span className="dialogue-cursor" />}
+                  {waitLine2 && <MiniWave />}
+                </>
               ) : (
-                <span style={{ opacity:0.28, fontStyle:"italic", fontSize:"0.95rem" }}>
-                  Apa yang ingin kamu ceritakan?
-                </span>
+                <span className="dialogue-hint">Apa yang ingin kamu ceritakan?</span>
               )}
             </div>
 
-            {/* Input row */}
             <div className="input-wrapper">
               <input
                 ref={inputRef}
                 className="chat-input"
                 placeholder="Ketik pesan untuk Huohuo..."
                 value={input}
+                maxLength={MAX_INPUT}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
-                disabled={loading}
+                disabled={busy}
                 autoComplete="off"
+                enterKeyHint="send"
+                aria-label="Pesan untuk Huohuo"
                 autoFocus
               />
-              <button
-                className="send-btn"
-                onClick={sendMessage}
-                disabled={loading || !input.trim()}
-                title="Kirim"
-              >
-                {loading ? (
+              <button className="send-btn" onClick={() => void sendMessage()} disabled={busy || !input.trim()} title="Kirim" aria-label="Kirim">
+                {busy ? (
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="20">
-                      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
                     </circle>
                   </svg>
                 ) : (
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/>
+                    <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" />
                   </svg>
                 )}
               </button>

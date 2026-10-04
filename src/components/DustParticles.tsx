@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 
 interface Particle {
   x: number;
@@ -13,7 +13,7 @@ interface Particle {
   hue: number;
 }
 
-export default function DustParticles() {
+function DustParticles() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const particlesRef = useRef<Particle[]>([]);
@@ -29,10 +29,10 @@ export default function DustParticles() {
     sprite.width = sprite.height = 32;
     const sctx = sprite.getContext("2d")!;
     const grad = sctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-    grad.addColorStop(0,    "hsla(345, 70%, 85%, 1)");
-    grad.addColorStop(0.25, "hsla(345, 70%, 85%, 0.9)");
-    grad.addColorStop(0.45, "hsla(345, 80%, 80%, 0.3)");
-    grad.addColorStop(1,    "hsla(345, 80%, 80%, 0)");
+    grad.addColorStop(0,    "hsla(0, 0%, 85%, 1)");
+    grad.addColorStop(0.25, "hsla(0, 0%, 85%, 0.9)");
+    grad.addColorStop(0.45, "hsla(0, 0%, 80%, 0.3)");
+    grad.addColorStop(1,    "hsla(0, 0%, 80%, 0)");
     sctx.fillStyle = grad;
     sctx.fillRect(0, 0, 32, 32);
 
@@ -114,3 +114,5 @@ export default function DustParticles() {
     />
   );
 }
+
+export default memo(DustParticles);

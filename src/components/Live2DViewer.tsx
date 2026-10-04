@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, memo } from "react";
 
 const MODEL_URL = `${import.meta.env.BASE_URL}model/huohuo/huohuo.model3.json`;
 
@@ -103,7 +103,7 @@ const Live2DViewer = forwardRef<Live2DViewerHandle, Props>(({ onLoad, onError, o
         !!(w.PIXI.live2d?.Live2DModel ?? w.Live2DModel) &&
         !!w.Live2DCubismCore;
       if (!ready) {
-        if (++retries > 60) { clearInterval(poll); fail(); }
+        if (++retries > 200) { clearInterval(poll); fail(); } // ±20 dtk menunggu script CDN
         return;
       }
       clearInterval(poll);
@@ -129,9 +129,17 @@ const Live2DViewer = forwardRef<Live2DViewerHandle, Props>(({ onLoad, onError, o
           powerPreference: "high-performance",
         });
         appRef.current = app;
+        // konteks WebGL hilang (tab lama, GPU reset) → beralih ke avatar CSS, bukan layar kosong
+        const onLost = (e: Event) => { e.preventDefault(); fail(); };
+        canvas!.addEventListener("webglcontextlost", onLost);
+        (container as any).__lostCleanup = () => canvas!.removeEventListener("webglcontextlost", onLost);
         onProgress?.(28);
 
-        Live2DModel.from(MODEL_URL, { autoInteract: false })
+        // model tak boleh menggantung selamanya: lewat 30 dtk → pakai avatar CSS
+        const modelTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("model-timeout")), 30000),
+        );
+        Promise.race([Live2DModel.from(MODEL_URL, { autoInteract: false }), modelTimeout])
           .then((model: any) => {
             if (destroyedRef.current) { app.destroy(true); return; }
 
@@ -178,6 +186,7 @@ const Live2DViewer = forwardRef<Live2DViewerHandle, Props>(({ onLoad, onError, o
       destroyedRef.current = true;
       clearInterval(poll);
       try { (containerRef.current as any)?.__resizeCleanup?.(); } catch {}
+      try { (containerRef.current as any)?.__lostCleanup?.(); } catch {}
       try { (appRef.current as any)?.destroy(true); } catch {}
       appRef.current  = null;
       modelRef.current = null;
@@ -325,4 +334,4 @@ const Live2DViewer = forwardRef<Live2DViewerHandle, Props>(({ onLoad, onError, o
 });
 
 Live2DViewer.displayName = "Live2DViewer";
-export default Live2DViewer;
+export default memo(Live2DViewer);
