@@ -257,57 +257,15 @@ export function ttsClean(s: string): string {
     .slice(0, 240);
 }
 
-const cache = new Map<string, string>(); // teks → blob URL (LRU sederhana)
-const CACHE_MAX = 24;
-
-function remember(key: string, url: string) {
-  cache.set(key, url);
-  while (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    const u = cache.get(oldest);
-    cache.delete(oldest);
-    if (u) URL.revokeObjectURL(u);
-  }
-}
-
-const looksLikeAudio = (type: string) => /audio|octet-stream|mpeg|mp3/i.test(type);
-
 /**
- * Menyiapkan suara untuk satu kalimat. Urutan: proxy Vercel (/api/tts) → fetch
- * langsung ke kev-tts → URL langsung (dimuat elemen <audio>, tidak butuh CORS).
- * Mengembalikan null hanya bila teks kosong. Melempar AbortedError jika dibatalkan.
+ * Build the kev-tts audio URL immediately instead of downloading the complete
+ * response through a proxy first. The shared HTMLAudioElement streams the
+ * response and does not require cross-origin fetch/CORS permission.
  */
 export async function prepareTTS(text: string, signal: AbortSignal): Promise<TTSResult | null> {
+  if (signal.aborted) throw new AbortedError();
   const clean = ttsClean(text);
   if (!clean) return null;
-
-  const hit = cache.get(clean);
-  if (hit) {
-    cache.delete(clean);
-    cache.set(clean, hit);
-    return { url: hit, direct: false };
-  }
-
-  const q = encodeURIComponent(clean);
-  const cfg = await getYukiConfig();
-  const voiceEndpoint = cfg.api?.voice || "/api/tts";
-  const direct = `${cfg.api?.voiceFallback || TTS_URL}?text=${q}`;
-  const tries = [
-    { url: `${voiceEndpoint}?text=${q}`, ms: 10000 },
-    { url: direct, ms: 9000 },
-  ];
-  for (const t of tries) {
-    try {
-      const r = await request(t.url, {}, t.ms, signal, "blob");
-      if (r.ok && r.blob && r.blob.size > 200 && looksLikeAudio(r.type || r.blob.type)) {
-        const url = URL.createObjectURL(r.blob);
-        remember(clean, url);
-        return { url, direct: false };
-      }
-    } catch (e) {
-      if (isAbort(e)) throw e;
-    }
-  }
-  return { url: direct, direct: true };
+  // Endpoint kev-tts dipilih langsung agar tidak menunggu konfigurasi/proxy.
+  return { url: `${TTS_URL}?text=${encodeURIComponent(clean)}`, direct: true };
 }

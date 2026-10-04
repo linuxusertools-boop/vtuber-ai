@@ -648,3 +648,135 @@ button, input, textarea { max-width: 100%; }
   .chat-home-btn { top: calc(10px + env(safe-area-inset-top, 0px)) !important; left: 9px !important; min-height: 32px; padding: 7px 9px !important; font-size: 9px !important; }
   .fullscreen-btn { top: calc(10px + env(safe-area-inset-top, 0px)) !important; right: 9px !important; min-height: 32px; }
 }
+
+
+/* Fast live chat: transparent feed, but every actual message is a clearly visible bubble. */
+.chat-feed { background: transparent !important; }
+.chat-message, .message-content { background: transparent !important; }
+.message-content p {
+  display: block !important;
+  width: fit-content;
+  max-width: min(100%, 520px);
+  padding: 10px 13px !important;
+  border: 1px solid rgba(214, 205, 255, .34) !important;
+  border-radius: 16px 16px 16px 5px !important;
+  background: rgba(26, 23, 43, .78) !important;
+  color: #fff !important;
+  box-shadow: 0 5px 18px rgba(8, 8, 20, .20), inset 0 1px 0 rgba(255,255,255,.08) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,.72) !important;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.user-message .message-content p {
+  margin-left: auto;
+  border-color: rgba(169, 154, 255, .60) !important;
+  border-radius: 16px 16px 5px 16px !important;
+  background: rgba(88, 65, 160, .84) !important;
+  color: #fff !important;
+}
+.live-response .message-content p {
+  border-color: rgba(185, 165, 255, .52) !important;
+  background: rgba(39, 31, 67, .78) !important;
+}
+.typing-bubble {
+  display: flex !important; width: fit-content; padding: 9px 12px !important;
+  border: 1px solid rgba(214,205,255,.28) !important; border-radius: 14px !important;
+  background: rgba(26,23,43,.78) !important; box-shadow: 0 4px 14px rgba(0,0,0,.18) !important;
+}
+@media (max-width: 650px) {
+  .message-content p { padding: 9px 11px !important; font-size: 13px !important; }
+}
+
+
+/* ── Cinematic YUKI ambience: dark backdrop, overhead spotlight, soft mist & dew ── */
+.scene-root {
+  background: #080b13 !important;
+}
+.scene-bg {
+  /* Darken only the scenery behind the model; never apply a filter to the VTuber itself. */
+  filter: saturate(1.12) brightness(.76) contrast(1.06) !important;
+  transform: scale(1.035);
+}
+.scene-atmosphere {
+  position: absolute;
+  inset: -2%;
+  z-index: 6;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 48% 82% at 50% 35%, rgba(8, 12, 24, .02) 0%, rgba(8, 12, 24, .10) 42%, rgba(3, 5, 12, .54) 100%),
+    radial-gradient(ellipse 34% 54% at 50% 5%, rgba(180, 218, 255, .13) 0%, rgba(126, 164, 222, .055) 36%, transparent 75%),
+    linear-gradient(180deg, rgba(4, 7, 15, .26) 0%, transparent 24%, transparent 63%, rgba(2, 4, 11, .24) 100%);
+  isolation: isolate;
+}
+.scene-atmosphere::before {
+  content: "";
+  position: absolute;
+  top: -12%;
+  left: 50%;
+  width: min(84vw, 900px);
+  height: 88%;
+  transform: translateX(-50%);
+  clip-path: polygon(43% 0, 57% 0, 100% 100%, 0 100%);
+  background: linear-gradient(180deg,
+    rgba(208, 230, 255, .15) 0%,
+    rgba(180, 211, 255, .075) 26%,
+    rgba(153, 187, 242, .028) 62%,
+    transparent 100%);
+  filter: blur(18px);
+  opacity: .82;
+  animation: yuki-light-shift 12s ease-in-out infinite alternate;
+}
+.scene-atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 38% 12% at 50% 22%, rgba(191, 220, 255, .08), transparent 75%),
+    radial-gradient(ellipse 70% 15% at 50% 67%, rgba(143, 179, 219, .075), transparent 78%),
+    radial-gradient(ellipse 65% 22% at 50% 92%, rgba(100, 128, 168, .065), transparent 80%);
+  filter: blur(15px);
+  animation: yuki-mist-drift 18s ease-in-out infinite alternate;
+}
+.scene-dew {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: .72;
+  background-image:
+    radial-gradient(ellipse 2px 3px at 12% 22%, rgba(220, 239, 255, .48) 0%, rgba(160, 201, 238, .15) 42%, transparent 100%),
+    radial-gradient(ellipse 1.5px 2.5px at 22% 61%, rgba(226, 242, 255, .38) 0%, rgba(154, 191, 229, .12) 46%, transparent 100%),
+    radial-gradient(ellipse 2px 3px at 78% 31%, rgba(220, 239, 255, .42) 0%, rgba(160, 201, 238, .12) 45%, transparent 100%),
+    radial-gradient(ellipse 1.5px 2px at 88% 72%, rgba(232, 246, 255, .38) 0%, rgba(160, 201, 238, .1) 48%, transparent 100%),
+    radial-gradient(ellipse 1px 2px at 66% 13%, rgba(255, 255, 255, .42) 0%, transparent 100%),
+    radial-gradient(ellipse 1.5px 2.5px at 35% 82%, rgba(205, 229, 255, .32) 0%, transparent 100%);
+  background-size: 100% 100%;
+  filter: blur(.25px);
+  animation: yuki-dew-drift 16s ease-in-out infinite alternate;
+}
+.scene-particles { z-index: 8 !important; opacity: .78 !important; }
+.live2d-wrapper { z-index: 10 !important; filter: none !important; }
+.scene-atmosphere, .scene-dew, .scene-particles { contain: paint; }
+@keyframes yuki-light-shift {
+  0% { opacity: .56; transform: translateX(-50%) scaleX(.94); }
+  100% { opacity: .9; transform: translateX(-48%) scaleX(1.08); }
+}
+@keyframes yuki-mist-drift {
+  0% { transform: translate3d(-1.5%, 0, 0) scale(1); opacity: .52; }
+  100% { transform: translate3d(1.5%, -1%, 0) scale(1.04); opacity: .82; }
+}
+@keyframes yuki-dew-drift {
+  0% { transform: translate3d(0, 0, 0); opacity: .5; }
+  100% { transform: translate3d(0, -7px, 0); opacity: .82; }
+}
+@media (max-width: 650px) {
+  .scene-bg { filter: saturate(1.1) brightness(.8) contrast(1.04) !important; }
+  .scene-atmosphere::before { width: 120vw; height: 75%; filter: blur(22px); opacity: .72; }
+  .scene-dew { opacity: .55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-atmosphere::before, .scene-atmosphere::after, .scene-dew { animation: none !important; }
+}

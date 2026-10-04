@@ -3,8 +3,8 @@ import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
 import { BootLoader, MiniWave } from "@/components/Loaders";
-import { askAI, buildPrompt, parseAI, prepareTTS, sleep, isAbort, getYukiConfig, type Parsed, type TTSResult } from "@/lib/api";
-import { unlockAudio, playUrl, speakBrowser, typeText, stopAudio, stopSpeech, HAS_SPEECH, type PlayResult } from "@/lib/audio";
+import { askAI, buildPrompt, parseAI, prepareTTS, isAbort, getYukiConfig, type Parsed, type TTSResult } from "@/lib/api";
+import { unlockAudio, playUrl, stopAudio, stopSpeech, type PlayResult } from "@/lib/audio";
 
 const BG_URL = "https://cdn.nexray.eu.cc/download/rOyFPH";
 const MAX_INPUT = 300;
@@ -96,78 +96,49 @@ export default function VTuberChat() {
     return c;
   }, [stopMouth]);
 
-  // ── satu kalimat: suara + teks berjalan serempak ─────────────────────────
+  // ── satu kalimat: teks muncul langsung, suara diputar dari kev-tts ───────
   const presentLine = useCallback(
     async (text: string, tts: TTSResult | null, setShown: (s: string) => void, signal: AbortSignal, voice: boolean) => {
-      let last = -1;
-      const reveal = (r: number) => {
-        const n = Math.min(text.length, Math.ceil(text.length * Math.min(1, r / 0.92)));
-        if (n !== last) {
-          last = n;
-          setShown(text.slice(0, n));
-        }
-      };
-      const hooks = { onStart: startMouth, onProgress: reveal };
-
-      let outcome: PlayResult = "failed";
-      if (voice && tts) {
-        outcome = await playUrl(tts.url, signal, hooks); // teks mulai mengalir saat onStart → bersamaan
-        stopMouth();
-      }
+      if (signal.aborted) return;
+      // Jangan menahan bubble saat audio sedang dimuat/dibuat oleh API.
+      setShown(text);
+      if (!voice || !tts || !ttsOnRef.current) return;
+      const hooks = { onStart: startMouth, onProgress: (_ratio: number) => undefined };
+      const outcome: PlayResult = await playUrl(tts.url, signal, hooks);
+      stopMouth();
       if (signal.aborted || outcome === "aborted") return;
-      if (outcome === "done") {
-        setShown(text);
-        return;
-      }
-      // suara kev-tts gagal → suara bawaan browser (hanya jika memang gagal, bukan diblokir autoplay)
-      if (voice && outcome === "failed" && HAS_SPEECH) {
-        const r = await speakBrowser(text, signal, hooks);
-        stopMouth();
-        if (signal.aborted || r === "aborted") return;
-        if (r === "done") {
-          setShown(text);
-          return;
-        }
-      }
-      // terakhir: tanpa suara, teks diketik biasa
-      await typeText(text, setShown, signal);
-      if (!signal.aborted) setShown(text);
+      // Tidak memakai Google Translate maupun speechSynthesis sebagai pengganti.
+      // Jika endpoint TTS gagal, teks tetap tampil dan percakapan tidak macet.
     },
     [startMouth, stopMouth],
   );
 
-  // ── satu pesan: tunggu suara siap → teks & suara mulai bersamaan ─────────
+  // ── tampilkan bubble sebelum menunggu audio, lalu putar TTS paralel ───────
   const presentMessage = useCallback(
     async (msg: Parsed, signal: AbortSignal, speak: boolean) => {
       const voice = speak && ttsOnRef.current;
-      if (voice) setStage("tts");
       const p1 = voice ? prepareTTS(msg.text1, signal).catch(() => null) : Promise.resolve(null);
       const p2 = voice && msg.text2 ? prepareTTS(msg.text2, signal).catch(() => null) : Promise.resolve(null);
-      let ready2 = false;
-      void p2.then(() => {
-        ready2 = true;
-      });
-
-      const r1 = await p1; // ← teks sengaja belum muncul sampai suara kalimat 1 siap
       if (signal.aborted) return;
 
-      setStage("idle");
-      setShown1("");
-      setShown2("");
-      setWaitLine2(false);
       setCurrentMsg(msg);
+      setShown1(msg.text1); // bubble AI langsung terlihat setelah respons AI diterima
+      setShown2(msg.text2); // seluruh isi bubble tampil langsung, TTS berjalan setelahnya
+      setWaitLine2(false);
       setRevealing(true);
+      setStage(voice ? "tts" : "idle");
       viewerRef.current?.setExpression(msg.expression);
+
+      const r1 = await p1;
+      if (signal.aborted) return;
+      setStage("idle");
       await presentLine(msg.text1, r1, setShown1, signal, voice);
       if (signal.aborted) return;
 
       if (msg.text2) {
-        await sleep(160, signal).catch(() => undefined);
-        if (signal.aborted) return;
-        if (voice && !ready2) setWaitLine2(true); // suara kalimat 2 belum siap → equalizer mini
+        setShown2(msg.text2); // teks lanjutan juga tidak menunggu TTS
         const r2 = await p2;
         if (signal.aborted) return;
-        setWaitLine2(false);
         await presentLine(msg.text2, r2, setShown2, signal, voice);
       }
       if (!signal.aborted) setRevealing(false);
@@ -477,6 +448,8 @@ export default function VTuberChat() {
   return (
     <div className="scene-root">
       <div className="scene-bg" style={bgStyle} />
+      <div className="scene-atmosphere" aria-hidden="true" />
+      <div className="scene-dew" aria-hidden="true" />
       <div className="scene-scanlines" />
       <div className="scene-grain" />
       <div className="scene-vignette" />
@@ -569,7 +542,7 @@ export default function VTuberChat() {
                   {message.role === "user" && <span className="message-avatar user-avatar">☺</span>}
                 </div>
               ))}
-              {stage !== "idle" && (
+              {stage !== "idle" && !(currentMsg && displayedText) && (
                 <div className="chat-message assistant-message typing-message">
                   <span className="message-avatar">✳</span>
                   <div className="message-content"><span className="message-author">{aiName}</span><div className="typing-bubble"><i/><i/><i/><span>{stage === "tts" ? "Menyiapkan suara..." : "Sedang berpikir..."}</span></div></div>
