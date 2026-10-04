@@ -36,9 +36,6 @@ function EmotionPill({ emotion }: { emotion: string }) {
 
 export default function VTuberChat() {
   const [input, setInput] = useState("");
-  const [chatMode, setChatMode] = useState<ChatMode>("KVC");
-  const [micActive, setMicActive] = useState(false);
-  const [micStatus, setMicStatus] = useState("Tekan mulai untuk ngobrol");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<Stage>("idle");
   const [live2dReady, setLive2dReady] = useState(false);
@@ -52,9 +49,20 @@ export default function VTuberChat() {
   const [waitLine2, setWaitLine2] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [chatMode, setChatMode] = useState<ChatMode>("KVC");
+  const [klcActive, setKlcActive] = useState(false);
+  const [klcListening, setKlcListening] = useState(false);
+  const [voiceNotice, setVoiceNotice] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiName, setAiName] = useState("YUKI");
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
   const chatFeedRef = useRef<HTMLDivElement>(null);
+  const sceneRootRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const startKLCRef = useRef<(() => void) | null>(null);
+  const sendMessageRef = useRef<((voiceInput?: string) => Promise<void>) | null>(null);
+  const recognitionRunningRef = useRef(false);
+  const klcActiveRef = useRef(false);
   useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (active && cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); }).catch(() => undefined); return () => { active = false; }; }, []);
 
   const viewerRef = useRef<Live2DViewerHandle>(null);
@@ -62,10 +70,6 @@ export default function VTuberChat() {
   const historyRef = useRef<{ role: "user" | "assistant"; text: string }[]>([]);
   const ctrlRef = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
-  const speechRecognitionRef = useRef<any>(null);
-  const voiceModeActiveRef = useRef(false);
-  const modeRef = useRef<ChatMode>("KVC");
-  const sendMessageRef = useRef<(overrideText?: string) => Promise<void>>(async () => undefined);
   const ttsOnRef = useRef(true);
   const greetedRef = useRef(false);
 
@@ -170,8 +174,8 @@ export default function VTuberChat() {
   );
 
   // ── kirim pesan ──────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (overrideText?: string) => {
-    const text = (overrideText ?? input).trim().slice(0, MAX_INPUT);
+  const sendMessage = useCallback(async (voiceInput?: string) => {
+    const text = (voiceInput ?? input).trim().slice(0, MAX_INPUT);
     if (!text || busyRef.current) return;
     unlockAudio(); // harus sinkron di dalam gestur pengguna (syarat iOS/Safari)
 
@@ -234,118 +238,126 @@ export default function VTuberChat() {
         setRevealing(false);
         setWaitLine2(false);
         stopMouth();
-        setTimeout(() => inputRef.current?.focus(), 80);
+        if (chatMode === "KVC") setTimeout(() => inputRef.current?.focus(), 80);
+        else if (klcActiveRef.current) setTimeout(() => startKLCRef.current?.(), 320);
       }
     }
-  }, [input, newRun, presentMessage, stopMouth]);
+  }, [input, newRun, presentMessage, stopMouth, chatMode]);
 
-  sendMessageRef.current = sendMessage;
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
-  const startListening = useCallback(() => {
+  const startKLC = useCallback(() => {
     const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
-      setMicStatus("Browser ini belum mendukung pengenalan suara. Coba Chrome terbaru.");
-      setMicActive(false);
-      voiceModeActiveRef.current = false;
+      setVoiceNotice("Browser ini belum mendukung pengenalan suara. Coba Chrome atau Edge terbaru.");
+      setKlcActive(false);
+      klcActiveRef.current = false;
       return;
     }
     try {
-      if (!speechRecognitionRef.current) {
-        const recognition = new SpeechRecognitionCtor();
+      let recognition = recognitionRef.current;
+      if (!recognition) {
+        recognition = new SpeechRecognitionCtor();
         recognition.lang = "id-ID";
-        recognition.continuous = false;
+        recognition.continuous = true;
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
-        recognition.onstart = () => { setMicActive(true); setMicStatus("Mendengarkan kamu..."); };
-        recognition.onerror = (event: any) => {
-          if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
-            voiceModeActiveRef.current = false;
-            setMicActive(false);
-            setMicStatus("Izin mikrofon ditolak. Aktifkan izin mikrofon di browser.");
-          } else if (event?.error !== "no-speech" && event?.error !== "aborted") {
-            setMicStatus("Suara belum tertangkap. Coba bicara lagi.");
-          }
-        };
+        recognition.onstart = () => { recognitionRunningRef.current = true; setKlcListening(true); setVoiceNotice("YUKI mendengarkan… bicara secara natural."); };
         recognition.onresult = (event: any) => {
           let finalText = "";
           let interimText = "";
           for (let i = event.resultIndex; i < event.results.length; i++) {
-            const part = event.results[i]?.[0]?.transcript || "";
-            if (event.results[i].isFinal) finalText += part; else interimText += part;
+            const result = event.results[i];
+            const transcript = String(result?.[0]?.transcript || "").trim();
+            if (result.isFinal) finalText += `${transcript} `;
+            else interimText += `${transcript} `;
           }
-          if (interimText.trim()) setMicStatus(`Mendengar: “${interimText.trim()}”`);
+          if (interimText.trim()) setVoiceNotice(`Mendengarkan: ${interimText.trim()}`);
           if (finalText.trim()) {
-            const spokenText = finalText.trim().slice(0, MAX_INPUT);
-            setMicStatus("Yuki sedang membalas...");
-            try { recognition.stop(); } catch { /* recognition may already be stopped */ }
-            void sendMessageRef.current(spokenText);
+            setVoiceNotice(`Kamu: ${finalText.trim()}`);
+            try { recognition.stop(); } catch { /* recognition may already have stopped */ }
+            void sendMessageRef.current?.(finalText.trim());
+          }
+        };
+        recognition.onerror = (event: any) => {
+          const error = String(event?.error || "");
+          if (error === "not-allowed" || error === "service-not-allowed") {
+            klcActiveRef.current = false;
+            setKlcActive(false);
+            setVoiceNotice("Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser.");
+          } else if (error && error !== "no-speech" && error !== "aborted") {
+            setVoiceNotice(`Mikrofon: ${error}. Tekan Mulai Bicara untuk mencoba lagi.`);
           }
         };
         recognition.onend = () => {
-          if (modeRef.current === "KLC" && voiceModeActiveRef.current) {
-            window.setTimeout(() => {
-              if (modeRef.current === "KLC" && voiceModeActiveRef.current && !busyRef.current) {
-                try { speechRecognitionRef.current?.start(); } catch { /* already starting */ }
-              }
-            }, 500);
-          } else {
-            setMicActive(false);
-          }
+          recognitionRunningRef.current = false;
+          setKlcListening(false);
+          // Pengaktifan ulang dilakukan setelah balasan AI selesai, agar suara YUKI tidak ikut tertangkap.
         };
-        speechRecognitionRef.current = recognition;
+        recognitionRef.current = recognition;
       }
-      speechRecognitionRef.current.start();
+      if (!recognitionRunningRef.current) recognition.start();
     } catch {
-      // start() may throw if the recognizer is already running; the existing session remains active.
+      setKlcListening(false);
+      setVoiceNotice("Mikrofon belum siap. Periksa izin browser lalu coba lagi.");
+    }
+  }, [sendMessage]);
+
+  useEffect(() => { startKLCRef.current = startKLC; }, [startKLC]);
+
+  const toggleKLC = useCallback(() => {
+    if (klcActiveRef.current) {
+      klcActiveRef.current = false;
+      setKlcActive(false);
+      setKlcListening(false);
+      setVoiceNotice("Mode KLC dihentikan.");
+      try { recognitionRef.current?.stop(); } catch { /* no active recognition */ }
+      return;
+    }
+    klcActiveRef.current = true;
+    setKlcActive(true);
+    setVoiceNotice("Meminta akses mikrofon…");
+    startKLC();
+  }, [startKLC]);
+
+  const changeMode = useCallback((mode: ChatMode) => {
+    if (mode === chatMode) return;
+    if (mode !== "KLC") {
+      klcActiveRef.current = false;
+      setKlcActive(false);
+      setKlcListening(false);
+      try { recognitionRef.current?.stop(); } catch { /* no active recognition */ }
+    }
+    setChatMode(mode);
+    setVoiceNotice(mode === "KLC" ? "Mode ngobrol langsung: tekan Mulai Bicara untuk memulai." : "Mode KVC aktif: kamu bisa mengetik dan mendengar balasan YUKI.");
+  }, [chatMode]);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+      const root = sceneRootRef.current || document.documentElement;
+      const el = root as any;
+      if (root.requestFullscreen) await root.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else setVoiceNotice("Fullscreen tidak didukung browser ini. Coba buka lewat Chrome/Edge atau instal sebagai aplikasi.");
+    } catch {
+      setVoiceNotice("Fullscreen ditolak browser. Coba tekan tombol fullscreen sekali lagi.");
     }
   }, []);
 
   useEffect(() => {
-    modeRef.current = chatMode;
-    if (chatMode !== "KLC") {
-      voiceModeActiveRef.current = false;
-      setMicActive(false);
-      try { speechRecognitionRef.current?.stop(); } catch { /* ignore */ }
-      setMicStatus("Tekan mulai untuk ngobrol");
-    } else if (voiceModeActiveRef.current && !busyRef.current) {
-      const timer = window.setTimeout(startListening, 250);
-      return () => window.clearTimeout(timer);
-    }
-  }, [chatMode, startListening, busy]);
-
-  useEffect(() => () => {
-    voiceModeActiveRef.current = false;
-    try { speechRecognitionRef.current?.abort(); } catch { /* ignore */ }
+    const updateFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    document.addEventListener("webkitfullscreenchange", updateFullscreen as EventListener);
+    return () => {
+      document.removeEventListener("fullscreenchange", updateFullscreen);
+      document.removeEventListener("webkitfullscreenchange", updateFullscreen as EventListener);
+      try { recognitionRef.current?.stop(); } catch { /* ignore cleanup */ }
+    };
   }, []);
-
-  const toggleVoiceMode = () => {
-    if (voiceModeActiveRef.current) {
-      voiceModeActiveRef.current = false;
-      setMicActive(false);
-      setMicStatus("Mode suara dijeda");
-      try { speechRecognitionRef.current?.stop(); } catch { /* ignore */ }
-      return;
-    }
-    unlockAudio();
-    voiceModeActiveRef.current = true;
-    setMicStatus("Meminta akses mikrofon...");
-    startListening();
-  };
-
-  const toggleFullscreen = async () => {
-    const root = document.querySelector(".scene-root") as HTMLElement | null;
-    try {
-      if (!document.fullscreenElement && root?.requestFullscreen) {
-        await root.requestFullscreen();
-      } else if (document.fullscreenElement && document.exitFullscreen) {
-        await document.exitFullscreen();
-      } else {
-        setMicStatus("Untuk layar penuh tanpa bar browser, tambahkan YUKI ke layar utama / install sebagai aplikasi.");
-      }
-    } catch {
-      setMicStatus("Fullscreen tidak didukung browser ini. Coba mode layar penuh dari menu browser.");
-    }
-  };
 
   const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -449,7 +461,7 @@ export default function VTuberChat() {
 
   // ── adegan utama ─────────────────────────────────────────────────────────
   return (
-    <div className="scene-root">
+    <div className={`scene-root${chatMode === "KLC" ? " klc-mode" : ""}`} ref={sceneRootRef}>
       <div className="scene-bg" style={bgStyle} />
       <div className="scene-scanlines" />
       <div className="scene-grain" />
@@ -461,8 +473,16 @@ export default function VTuberChat() {
       <div className="corner-frame corner-bl" />
       <div className="corner-frame corner-br" />
 
-      <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>← Dashboard</button>
-      <button className="fullscreen-btn" onClick={() => void toggleFullscreen()} aria-label="Layar penuh" title="Layar penuh">⛶ <span>FULLSCREEN</span></button>
+      <div className="scene-topbar" role="toolbar" aria-label="Kontrol percakapan YUKI">
+        <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>← Kembali</button>
+        <div className="topbar-right">
+          <div className="chat-mode-switch" role="group" aria-label="Mode chat">
+            <button className={chatMode === "KVC" ? "active" : ""} onClick={() => changeMode("KVC")} aria-pressed={chatMode === "KVC"} title="Kev Voice Chat">KVC</button>
+            <button className={chatMode === "KLC" ? "active" : ""} onClick={() => changeMode("KLC")} aria-pressed={chatMode === "KLC"} title="Kev Live Chat">KLC</button>
+          </div>
+          <button className="fullscreen-btn" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? "Keluar fullscreen" : "Masuk fullscreen"} title={isFullscreen ? "Keluar fullscreen" : "Masuk fullscreen"}>{isFullscreen ? "⤢ EXIT" : "⛶ FULL"}</button>
+        </div>
+      </div>
       <div className="name-plate">
         <div className="name-plate-inner">
           <h1>{aiName}</h1>
@@ -486,7 +506,7 @@ export default function VTuberChat() {
       {!showUI && <BootLoader pct={loadPct} />}
 
       {showUI && (
-        <div className="dialogue-panel">
+        <div className={`dialogue-panel${chatMode === "KLC" ? " klc-overlay" : ""}`}>
           <div className={`dialogue-box${stage !== "idle" ? " is-busy" : ""}`}>
             {stage !== "idle" && <div className="busy-line" />}
 
@@ -522,11 +542,7 @@ export default function VTuberChat() {
               {IS_IFRAME && <button className="full-btn" onClick={openFull}>FULL ↗</button>}
             </div>
 
-            <div className="mode-switch" role="tablist" aria-label="Mode percakapan">
-              <button className={chatMode === "KVC" ? "active" : ""} onClick={() => setChatMode("KVC")} role="tab" aria-selected={chatMode === "KVC"}><span>KVC</span><small>Kev Voice Chat</small></button>
-              <button className={chatMode === "KLC" ? "active" : ""} onClick={() => setChatMode("KLC")} role="tab" aria-selected={chatMode === "KLC"}><span>KLC</span><small>Kev Live Chat</small></button>
-            </div>
-            <div className="chat-feed" ref={chatFeedRef} aria-live="polite" aria-label="Riwayat percakapan">
+            <div className={`chat-feed soft-fade-feed${chatMode === "KLC" ? " klc-chat-feed" : ""}`} ref={chatFeedRef} aria-live="polite" aria-label="Riwayat percakapan">
               {chatMessages.length === 0 && currentMsg && displayedText && stage === "idle" && !revealing && (
                 <div className="chat-message assistant-message">
                   <span className="message-avatar">✳</span>
@@ -558,42 +574,46 @@ export default function VTuberChat() {
               <div className="chat-feed-end" />
             </div>
 
-            <div className="chat-compose-hint"><span>✦</span> {chatMode === "KLC" ? micStatus : "Ceritakan apa saja, aku di sini untuk mendengarkan."}</div>
-            {chatMode === "KVC" ? <div className="input-wrapper">
-              <input
-                ref={inputRef}
-                className="chat-input"
-                placeholder={`Ketik pesan untuk ${aiName}...`}
-                value={input}
-                maxLength={MAX_INPUT}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKey}
-                disabled={busy}
-                autoComplete="off"
-                enterKeyHint="send"
-                aria-label="Pesan untuk Yuki"
-                autoFocus
-              />
-              <button className="send-btn" onClick={() => void sendMessage()} disabled={busy || !input.trim()} title="Kirim" aria-label="Kirim">
-                {busy ? (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="20">
-                      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
-                    </circle>
-                  </svg>
-                ) : (
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" />
-                  </svg>
-                )}
-              </button>
-            </div> : <div className={`voice-mode-panel${micActive ? " listening" : ""}`}>
-              <button className="voice-talk-btn" onClick={toggleVoiceMode} aria-pressed={voiceModeActiveRef.current}>
-                <span className="voice-talk-icon">{voiceModeActiveRef.current ? "Ⅱ" : "🎙"}</span>
-                <span>{voiceModeActiveRef.current ? "Jeda ngobrol" : "Mulai ngobrol"}</span>
-              </button>
-              <div className="voice-orb" aria-hidden="true"><i/><i/><i/><i/><i/></div>
-            </div>}
+            <div className="chat-compose-hint"><span>✦</span> {chatMode === "KLC" ? "Ngobrol langsung dengan suara, tanpa mengetik." : "Ceritakan apa saja, aku di sini untuk mendengarkan."}</div>
+            {chatMode === "KVC" ? (
+              <div className="input-wrapper">
+                <input
+                  ref={inputRef}
+                  className="chat-input"
+                  placeholder={`Ketik pesan untuk ${aiName}...`}
+                  value={input}
+                  maxLength={MAX_INPUT}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKey}
+                  disabled={busy}
+                  autoComplete="off"
+                  enterKeyHint="send"
+                  aria-label="Pesan untuk Yuki"
+                  autoFocus
+                />
+                <button className="send-btn" onClick={() => void sendMessage()} disabled={busy || !input.trim()} title="Kirim" aria-label="Kirim">
+                  {busy ? (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" strokeDasharray="60" strokeDashoffset="20">
+                        <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
+                      </circle>
+                    </svg>
+                  ) : (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="klc-controls">
+                <button className={`klc-mic-btn${klcActive ? " active" : ""}`} onClick={toggleKLC} disabled={busy} aria-pressed={klcActive}>
+                  <span className="klc-mic-icon">{klcListening ? "◉" : "🎙"}</span>
+                  <span>{klcActive ? (klcListening ? "MENDENGARKAN · BICARA SAJA" : "MENYIAPKAN MIKROFON…") : "MULAI BICARA"}</span>
+                </button>
+                {voiceNotice && <div className="klc-voice-notice" aria-live="polite">{voiceNotice}</div>}
+              </div>
+            )}
           </div>
         </div>
       )}
