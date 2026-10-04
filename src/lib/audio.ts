@@ -30,14 +30,20 @@ function audio(): HTMLAudioElement {
 export function unlockAudio(): void {
   if (unlocked) return;
   try {
-    const a = audio();
-    a.src = SILENT_WAV;
-    const p = a.play();
+    // Elemen terpisah penting: jangan sampai promise audio senyap mem-pause
+    // audio Kev-TTS yang sudah mulai diputar pada elemen utama.
+    const unlocker = new Audio(SILENT_WAV);
+    unlocker.preload = "auto";
+    unlocker.setAttribute("playsinline", "");
+    const p = unlocker.play();
     if (p && typeof p.then === "function") {
       p.then(() => {
         unlocked = true;
-        a.pause();
-      }).catch(() => {});
+        unlocker.pause();
+        unlocker.removeAttribute("src");
+      }).catch(() => {
+        // Browser tertentu tetap meminta gestur pengguna saat pertama kali.
+      });
     }
   } catch {
     /* abaikan */
@@ -81,6 +87,7 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
       a.removeEventListener("ended", onEnd);
       a.removeEventListener("error", onErr);
       a.removeEventListener("canplay", onCanPlay);
+      a.removeEventListener("playing", onPlaying);
       a.removeEventListener("pause", onPause);
       signal.removeEventListener("abort", onAbort);
     };
@@ -111,15 +118,8 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
       if (isFinite(d) && d > 0) h.onProgress(Math.min(1, a.currentTime / d));
       raf = requestAnimationFrame(tick);
     };
-    const onCanPlay = async () => {
-      a.removeEventListener("canplay", onCanPlay);
-      if (settled) return;
-      try {
-        await a.play();
-      } catch (e) {
-        return finish((e as { name?: string })?.name === "NotAllowedError" ? "blocked" : "failed");
-      }
-      if (settled) return;
+    const markStarted = () => {
+      if (settled || started) return;
       started = true;
       a.addEventListener("pause", onPause);
       h.onStart();
@@ -128,12 +128,26 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
       // pengaman: jika 'ended' tak pernah datang, jangan biarkan UI menggantung
       timers.push(window.setTimeout(() => finish("done"), (isFinite(d) && d > 0 ? d * 1000 : 15000) + 4000));
     };
+    const onPlaying = () => markStarted();
+    const onCanPlay = async () => {
+      if (settled || started) return;
+      try {
+        // play() dipanggil segera setelah data media tersedia. Audio senyap
+        // sudah di-unlock saat aksi pengguna, sehingga browser mobile lebih
+        // mungkin mengizinkan playback asinkron setelah respons AI.
+        await a.play();
+        if (!settled) markStarted();
+      } catch (e) {
+        return finish((e as { name?: string })?.name === "NotAllowedError" ? "blocked" : "failed");
+      }
+    };
 
     signal.addEventListener("abort", onAbort, { once: true });
     a.addEventListener("ended", onEnd);
     a.addEventListener("error", onErr);
     a.addEventListener("canplay", onCanPlay);
-    timers.push(window.setTimeout(() => !started && finish("failed"), 9000)); // gagal memuat
+    a.addEventListener("playing", onPlaying);
+    timers.push(window.setTimeout(() => !started && finish("failed"), 15000)); // API lambat/gagal memuat
     try {
       a.pause();
       a.src = url;

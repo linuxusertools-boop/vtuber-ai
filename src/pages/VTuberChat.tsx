@@ -96,65 +96,66 @@ export default function VTuberChat() {
     return c;
   }, [stopMouth]);
 
-  // ── satu kalimat: teks muncul langsung, suara diputar dari kev-tts ───────
-  const presentLine = useCallback(
-    async (text: string, tts: TTSResult | null, setShown: (s: string) => void, signal: AbortSignal, voice: boolean) => {
-      if (signal.aborted) return;
-      // Jangan menahan bubble saat audio sedang dimuat/dibuat oleh API.
-      setShown(text);
-      if (!voice || !tts || !ttsOnRef.current) return;
-      const hooks = { onStart: startMouth, onProgress: (_ratio: number) => undefined };
-      const outcome: PlayResult = await playUrl(tts.url, signal, hooks);
-      stopMouth();
-      if (signal.aborted || outcome === "aborted") return;
-      // Tidak memakai Google Translate maupun speechSynthesis sebagai pengganti.
-      // Jika endpoint TTS gagal, teks tetap tampil dan percakapan tidak macet.
-    },
-    [startMouth, stopMouth],
-  );
-
-  // ── tampilkan bubble sebelum menunggu audio, lalu putar TTS paralel ───────
+  // ── bubble muncul segera; satu klip Kev-TTS untuk seluruh jawaban ────────
   const presentMessage = useCallback(
     async (msg: Parsed, signal: AbortSignal, speak: boolean) => {
       const voice = speak && ttsOnRef.current;
-      const p1 = voice ? prepareTTS(msg.text1, signal).catch(() => null) : Promise.resolve(null);
-      const p2 = voice && msg.text2 ? prepareTTS(msg.text2, signal).catch(() => null) : Promise.resolve(null);
-      if (signal.aborted) return;
+      const speechText = [msg.text1, msg.text2].filter(Boolean).join(" ").trim();
 
+      // Render bubble lebih dahulu: jangan menunggu API TTS/audio.
       setCurrentMsg(msg);
-      setShown1(msg.text1); // bubble AI langsung terlihat setelah respons AI diterima
-      setShown2(msg.text2); // seluruh isi bubble tampil langsung, TTS berjalan setelahnya
+      setShown1(msg.text1);
+      setShown2(msg.text2);
       setWaitLine2(false);
       setRevealing(true);
       setStage(voice ? "tts" : "idle");
       viewerRef.current?.setExpression(msg.expression);
 
-      const r1 = await p1;
-      if (signal.aborted) return;
-      setStage("idle");
-      await presentLine(msg.text1, r1, setShown1, signal, voice);
-      if (signal.aborted) return;
-
-      if (msg.text2) {
-        setShown2(msg.text2); // teks lanjutan juga tidak menunggu TTS
-        const r2 = await p2;
-        if (signal.aborted) return;
-        await presentLine(msg.text2, r2, setShown2, signal, voice);
+      if (!voice || !speechText || signal.aborted) {
+        setStage("idle");
+        setRevealing(false);
+        return;
       }
-      if (!signal.aborted) setRevealing(false);
+
+      try {
+        // Satu permintaan API untuk seluruh jawaban mengurangi jeda antar-kalimat.
+        const tts = await prepareTTS(speechText, signal);
+        if (signal.aborted) return;
+        if (!tts) {
+          setStage("idle");
+          setRevealing(false);
+          return;
+        }
+        const outcome: PlayResult = await playUrl(tts.url, signal, {
+          onStart: startMouth,
+          onProgress: (_ratio: number) => undefined,
+        });
+        stopMouth();
+        if (signal.aborted || outcome === "aborted") return;
+        // Tidak memakai Google Translate atau speechSynthesis sebagai pengganti.
+        // Bubble tetap tampil jika API tidak dapat diakses atau autoplay diblokir.
+      } catch {
+        // TTS gagal tidak boleh menghilangkan pesan atau membuat chat macet.
+      } finally {
+        if (!signal.aborted) {
+          setStage("idle");
+          setRevealing(false);
+          stopMouth();
+        }
+      }
     },
-    [presentLine],
+    [startMouth, stopMouth],
   );
 
   // ── kirim pesan ──────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (voiceText?: string) => {
     const text = (voiceText ?? input).trim().slice(0, MAX_INPUT);
     if (!text || busyRef.current) return;
-    unlockAudio(); // harus sinkron di dalam gestur pengguna (syarat iOS/Safari)
-
     busyRef.current = true;
     setBusy(true);
     const ctrl = newRun();
+    // Harus sinkron dengan aksi pengguna, sesudah stopAudio() dari newRun().
+    unlockAudio();
     const { signal } = ctrl;
     const prior = historyRef.current.slice(-8);
     historyRef.current.push({ role: "user", text });
