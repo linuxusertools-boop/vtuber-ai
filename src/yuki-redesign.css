@@ -647,3 +647,25 @@ button, input, textarea { max-width: 100%; }
   .scene-root .dialogue-box { padding-left: 8px !important; padding-right: 8px !important; }
   .scene-root .message-content p { padding: 7px 10px !important; }
 }
+
+/* Recovery: restore the light YUKI site shell and prevent the Live2D scene from being excessively dark. */
+html, body, #root {
+  background: var(--paper, #f6f5f2) !important;
+  color: var(--ink, #101011);
+}
+body { overflow-x: clip; overflow-y: auto; }
+#root { min-height: 100dvh; }
+.landing, .onboarding, .yuki-app, .dashboard-main { background-color: var(--paper, #f6f5f2); }
+.chat-route.live-chat-route { background: radial-gradient(ellipse at 50% 20%, #211b3c 0%, #100e20 58%, #090a10 100%); }
+.chat-route.live-chat-route .scene-root { background: #141025; }
+.chat-route.live-chat-route .scene-bg {
+  filter: saturate(1.35) brightness(.88) contrast(1.02) !important;
+}
+.chat-route.live-chat-route .scene-vignette {
+  background: radial-gradient(ellipse 65% 75% at 50% 42%, rgba(33, 24, 61, .06), rgba(9, 7, 22, .24) 100%) !important;
+}
+.chat-route.live-chat-route .scene-scanlines { opacity: .12; }
+.chat-route.live-chat-route .dialogue-box { background: rgba(12, 10, 24, .42); border-color: rgba(255,255,255,.10); }
+@media (max-width: 680px) {
+  .chat-route.live-chat-route, .chat-route.live-chat-route .scene-root { min-height: 100dvh; height: 100dvh; }
+}
