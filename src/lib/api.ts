@@ -4,15 +4,109 @@
 // semua kegagalan berakhir sebagai nilai yang aman (bukan exception liar).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type YukiConfig = { aiName?: string; prompt?: string; api?: { text?: string; textFallback?: string; voice?: string; voiceFallback?: string }; limits?: { requestTimeoutMs?: number; historyMessages?: number } };
+export const AI_URL = "https://kev-ai.vercel.app/ai";
+export const TTS_URL = "https://kev-tts.vercel.app/animemoe";
+/** Template endpoint suara. {text} diganti teks yang sudah di-encode. */
+export const TTS_TEMPLATE = `${TTS_URL}?text={text}`;
+
+export interface YukiConfig {
+  aiName?: string;
+  prompt?: string;
+  api: {
+    text: string;
+    textFallback: string;
+    /** URL API suara, contoh: https://kev-tts.vercel.app/animemoe?text={text} */
+    voice: string;
+    /** Proxy serverless (mengatasi CORS). Kosongkan "" untuk mematikan. */
+    voiceProxy: string;
+  };
+  tts: {
+    enabled: boolean;
+    /** total waktu maksimum menyiapkan suara (ms) */
+    timeoutMs: number;
+    /** batas waktu per percobaan unduh (ms) */
+    attemptTimeoutMs: number;
+    /** jumlah putaran ulang seluruh strategi jika gagal */
+    retries: number;
+    maxChars: number;
+  };
+  limits: { requestTimeoutMs: number; historyMessages: number };
+  // bagian lain (appearance, features, poweredBy, ...) dibiarkan apa adanya
+  [k: string]: unknown;
+}
+
+const DEFAULT_CONFIG: YukiConfig = {
+  aiName: "YUKI",
+  prompt: "Kamu adalah YUKI, assistant yang ramah dan membantu.",
+  api: { text: "/api/chat", textFallback: AI_URL, voice: TTS_TEMPLATE, voiceProxy: "/api/tts" },
+  tts: { enabled: true, timeoutMs: 20000, attemptTimeoutMs: 10000, retries: 1, maxChars: 240 },
+  limits: { requestTimeoutMs: 22000, historyMessages: 8 },
+};
+
+const str = (v: unknown, d: string): string => (typeof v === "string" ? v.trim() : d);
+const num = (v: unknown, d: number, min: number, max: number): number =>
+  typeof v === "number" && isFinite(v) ? Math.max(min, Math.min(max, v)) : d;
+
+/** Menggabungkan config.json dengan default. Apa pun isi file-nya, hasilnya selalu valid. */
+export function normalizeConfig(raw: unknown): YukiConfig {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const api = (r.api && typeof r.api === "object" ? r.api : {}) as Record<string, unknown>;
+  const tts = (r.tts && typeof r.tts === "object" ? r.tts : {}) as Record<string, unknown>;
+  const lim = (r.limits && typeof r.limits === "object" ? r.limits : {}) as Record<string, unknown>;
+  const D = DEFAULT_CONFIG;
+
+  // Kompatibel dengan format lama: voice:"/api/tts" + voiceFallback:"https://..."
+  let voice = str(api.voice, D.api.voice);
+  let voiceProxy = typeof api.voiceProxy === "string" ? api.voiceProxy.trim() : D.api.voiceProxy;
+  if (voice.startsWith("/")) {
+    if (typeof api.voiceProxy !== "string") voiceProxy = voice;
+    voice = str(api.voiceFallback, D.api.voice);
+  }
+  if (!/^https?:\/\//i.test(voice)) voice = D.api.voice;
+
+  return {
+    ...r,
+    aiName: str(r.aiName, D.aiName as string) || (D.aiName as string),
+    prompt: str(r.prompt, D.prompt as string) || (D.prompt as string),
+    api: {
+      text: str(api.text, D.api.text) || D.api.text,
+      textFallback: str(api.textFallback, D.api.textFallback) || D.api.textFallback,
+      voice,
+      voiceProxy,
+    },
+    tts: {
+      enabled: tts.enabled !== false,
+      timeoutMs: num(tts.timeoutMs, D.tts.timeoutMs, 4000, 60000),
+      attemptTimeoutMs: num(tts.attemptTimeoutMs, D.tts.attemptTimeoutMs, 3000, 30000),
+      retries: Math.round(num(tts.retries, D.tts.retries, 0, 3)),
+      maxChars: Math.round(num(tts.maxChars, D.tts.maxChars, 20, 300)),
+    },
+    limits: {
+      requestTimeoutMs: num(lim.requestTimeoutMs, D.limits.requestTimeoutMs, 5000, 60000),
+      historyMessages: Math.round(num(lim.historyMessages, D.limits.historyMessages, 0, 30)),
+    },
+  };
+}
+
 let configCache: YukiConfig | null = null;
 export async function getYukiConfig(): Promise<YukiConfig> {
   if (configCache) return configCache;
-  try { const r = await fetch("/config.json", { cache: "no-cache" }); if (r.ok) configCache = await r.json() as YukiConfig; } catch { /* safe defaults below */ }
-  return configCache || (configCache = { aiName: "YUKI", prompt: "Kamu adalah YUKI, assistant yang ramah dan membantu.", api: { text: "/api/chat", textFallback: "https://kev-ai.vercel.app/ai", voice: "/api/tts", voiceFallback: "https://kev-tts.vercel.app/animemoe" } });
+  let raw: unknown = null;
+  try {
+    const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL || "/";
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const r = await fetch(`${base}config.json`, { cache: "no-cache", signal: ctrl.signal });
+      if (r.ok) raw = await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    /* config rusak / tidak ada → pakai default */
+  }
+  return (configCache = normalizeConfig(raw));
 }
-export const AI_URL = "https://kev-ai.vercel.app/ai";
-export const TTS_URL = "https://kev-tts.vercel.app/animemoe";
 
 export const EXPRESSIONS = [
   "Senang", "Sedih", "Malu", "Tsundere", "Marah", "Kaget", "Bingung", "Serius",
@@ -23,11 +117,6 @@ export interface Parsed {
   expression: Expression;
   text1: string;
   text2: string;
-}
-
-export interface TTSResult {
-  url: string;
-  direct: boolean; // true = URL langsung ke kev-tts (tanpa blob), dimuat oleh elemen <audio>
 }
 
 export class AbortedError extends Error {
@@ -145,9 +234,9 @@ export function buildPrompt(
 
 export async function askAI(prompt: string, signal: AbortSignal): Promise<string> {
   const cfg = await getYukiConfig();
-  const textEndpoint = cfg.api?.text || "/api/chat";
-  const fallbackEndpoint = cfg.api?.textFallback || AI_URL;
-  const timeout = Math.max(5000, Math.min(60000, cfg.limits?.requestTimeoutMs || 22000));
+  const textEndpoint = cfg.api.text;
+  const fallbackEndpoint = cfg.api.textFallback;
+  const timeout = cfg.limits.requestTimeoutMs;
   const attempts: { url: string; ms: number; proxy: boolean }[] = [
     { url: textEndpoint, ms: timeout, proxy: textEndpoint.startsWith("/") },
     { url: fallbackEndpoint, ms: Math.min(timeout, 16000), proxy: false },
@@ -248,24 +337,137 @@ export function parseAI(raw: string): Parsed {
 }
 
 // ─── TTS ──────────────────────────────────────────────────────────────────────
-export function ttsClean(s: string): string {
+export function ttsClean(s: string, max = 240): string {
   return (s ?? "")
     .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE0F}\u200d]/gu, "")
     .replace(/[♡♪♥❤～〜~*_`#<>{}[\]\\|^]/g, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 240);
+    .slice(0, max)
+    .trim();
+}
+
+/** Isi template {text}; kalau template tidak punya {text}, tambahkan ?text= otomatis. */
+export function buildVoiceUrl(template: string, text: string): string {
+  const enc = encodeURIComponent(text);
+  if (template.includes("{text}")) return template.replace(/\{text\}/g, () => enc);
+  return `${template}${template.includes("?") ? "&" : "?"}text=${enc}`;
+}
+
+export interface VoiceClip {
+  src: string; // blob: URL (sudah terunduh penuh) atau URL langsung (streaming)
+  preloaded: boolean;
+  /** perkiraan durasi (detik) bila metadata audio tidak tersedia */
+  estSec: number;
+  release: () => void;
+}
+
+// Cache kecil: kalimat yang sama (mis. sapaan) berikutnya instan.
+const clipCache = new Map<string, Blob>();
+function cachePut(key: string, blob: Blob) {
+  clipCache.delete(key);
+  clipCache.set(key, blob);
+  while (clipCache.size > 16) {
+    const first = clipCache.keys().next().value;
+    if (first === undefined) break;
+    clipCache.delete(first);
+  }
+}
+
+async function sniffType(blob: Blob): Promise<string> {
+  const t = (blob.type || "").toLowerCase();
+  if (t.startsWith("audio/")) return t;
+  try {
+    const head = await blob.slice(0, 4).text();
+    if (head === "RIFF") return "audio/wav";
+    if (head === "OggS") return "audio/ogg";
+  } catch {
+    /* abaikan */
+  }
+  return "audio/mpeg";
+}
+
+function findUrl(body: string): string {
+  try {
+    const walk = (o: unknown, d = 0): string => {
+      if (typeof o === "string") return /^https?:\/\//i.test(o.trim()) ? o.trim() : "";
+      if (!o || typeof o !== "object" || d > 3) return "";
+      for (const v of Object.values(o as Record<string, unknown>)) {
+        const f = walk(v, d + 1);
+        if (f) return f;
+      }
+      return "";
+    };
+    return walk(JSON.parse(body));
+  } catch {
+    return "";
+  }
+}
+
+/** Unduh audio sebagai Blob yang sudah divalidasi. null = gagal (tidak pernah melempar kecuali abort). */
+async function downloadClip(url: string, ms: number, signal: AbortSignal, depth = 0): Promise<Blob | null> {
+  try {
+    const r = await request(url, {}, ms, signal, "blob");
+    if (!r.ok || !r.blob) return null;
+    const type = (r.type || r.blob.type || "").toLowerCase();
+    if (type.includes("json") || type.startsWith("text/")) {
+      // beberapa API mengembalikan JSON berisi link audio
+      const link = depth === 0 ? findUrl(await r.blob.text()) : "";
+      return link ? downloadClip(link, ms, signal, 1) : null;
+    }
+    if (r.blob.size < 256) return null;
+    return new Blob([r.blob], { type: await sniffType(r.blob) });
+  } catch (e) {
+    if (isAbort(e)) throw e;
+    return null;
+  }
+}
+
+function clipFromBlob(blob: Blob, estSec: number): VoiceClip {
+  const src = URL.createObjectURL(blob);
+  return { src, preloaded: true, estSec, release: () => { try { URL.revokeObjectURL(src); } catch { /* abaikan */ } } };
 }
 
 /**
- * Build the kev-tts audio URL immediately instead of downloading the complete
- * response through a proxy first. The shared HTMLAudioElement streams the
- * response and does not require cross-origin fetch/CORS permission.
+ * Menyiapkan suara dari API TTS di config.json (api.voice).
+ * Urutan strategi — semuanya memakai API yang sama, tanpa suara pengganti:
+ *   1. unduh langsung ke browser (bila API mengizinkan CORS)
+ *   2. lewat proxy /api/tts (selalu lolos CORS)
+ *   3. URL langsung ke elemen <audio> (streaming, tanpa CORS)
+ * Sehingga teks baru dimunculkan tepat ketika suara siap diputar → sinkron 100%.
+ * Mengembalikan null hanya bila tidak ada teks yang bisa diucapkan.
  */
-export async function prepareTTS(text: string, signal: AbortSignal): Promise<TTSResult | null> {
+export async function loadVoice(text: string, signal: AbortSignal): Promise<VoiceClip | null> {
   if (signal.aborted) throw new AbortedError();
-  const clean = ttsClean(text);
+  const cfg = await getYukiConfig();
+  const clean = ttsClean(text, cfg.tts.maxChars);
   if (!clean) return null;
-  // Endpoint kev-tts dipilih langsung agar tidak menunggu konfigurasi/proxy.
-  return { url: `${TTS_URL}?text=${encodeURIComponent(clean)}`, direct: true };
+  const estSec = Math.max(1.2, clean.length * 0.075);
+
+  const cached = clipCache.get(clean);
+  if (cached) return clipFromBlob(cached, estSec);
+
+  const direct = buildVoiceUrl(cfg.api.voice, clean);
+  const proxy = cfg.api.voiceProxy
+    ? `${cfg.api.voiceProxy}${cfg.api.voiceProxy.includes("?") ? "&" : "?"}text=${encodeURIComponent(clean)}&src=${encodeURIComponent(cfg.api.voice)}`
+    : "";
+  const urls = [direct, proxy].filter(Boolean);
+
+  const deadline = Date.now() + cfg.tts.timeoutMs;
+  for (let round = 0; round <= cfg.tts.retries; round++) {
+    for (const u of urls) {
+      const left = deadline - Date.now();
+      if (left < 1500) break;
+      const blob = await downloadClip(u, Math.min(left, cfg.tts.attemptTimeoutMs), signal);
+      if (signal.aborted) throw new AbortedError();
+      if (blob) {
+        cachePut(clean, blob);
+        return clipFromBlob(blob, estSec);
+      }
+    }
+    if (deadline - Date.now() < 1500) break;
+    if (round < cfg.tts.retries) await sleep(300, signal);
+  }
+  // Strategi 3: serahkan ke elemen <audio> (tidak terikat CORS).
+  return { src: direct, preloaded: false, estSec, release: () => undefined };
 }

@@ -30,17 +30,19 @@ function audio(): HTMLAudioElement {
 export function unlockAudio(): void {
   if (unlocked) return;
   try {
-    // Elemen terpisah penting: jangan sampai promise audio senyap mem-pause
-    // audio Kev-TTS yang sudah mulai diputar pada elemen utama.
-    const unlocker = new Audio(SILENT_WAV);
-    unlocker.preload = "auto";
-    unlocker.setAttribute("playsinline", "");
-    const p = unlocker.play();
+    const a = audio();
+    // Sedang memutar = sudah pasti terbuka; jangan ganggu audio yang berjalan.
+    if (!a.paused && !a.ended) {
+      unlocked = true;
+      return;
+    }
+    // iOS Safari: yang "dibuka" harus elemen yang sama dengan yang nanti memutar suara TTS.
+    // Klip senyap hanya 1 sampel, selesai jauh sebelum balasan AI datang.
+    a.src = SILENT_WAV;
+    const p = a.play();
     if (p && typeof p.then === "function") {
       p.then(() => {
         unlocked = true;
-        unlocker.pause();
-        unlocker.removeAttribute("src");
       }).catch(() => {
         // Browser tertentu tetap meminta gestur pengguna saat pertama kali.
       });
@@ -72,7 +74,7 @@ export function stopSpeech(): void {
  *  - onProgress dipanggil tiap frame dengan rasio currentTime/duration.
  * Tidak pernah reject; hasilnya selalu salah satu dari PlayResult.
  */
-export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<PlayResult> {
+export function playUrl(url: string, signal: AbortSignal, h: Hooks, estSec = 0, startTimeoutMs = 12000): Promise<PlayResult> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve("aborted");
     const a = audio();
@@ -116,6 +118,7 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
     const tick = () => {
       const d = a.duration;
       if (isFinite(d) && d > 0) h.onProgress(Math.min(1, a.currentTime / d));
+      else if (estSec > 0) h.onProgress(Math.min(0.97, a.currentTime / estSec)); // metadata belum ada → perkiraan
       raf = requestAnimationFrame(tick);
     };
     const markStarted = () => {
@@ -126,7 +129,7 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
       raf = requestAnimationFrame(tick);
       const d = a.duration;
       // pengaman: jika 'ended' tak pernah datang, jangan biarkan UI menggantung
-      timers.push(window.setTimeout(() => finish("done"), (isFinite(d) && d > 0 ? d * 1000 : 15000) + 4000));
+      timers.push(window.setTimeout(() => finish("done"), (isFinite(d) && d > 0 ? d * 1000 : Math.max(estSec, 6) * 2000) + 4000));
     };
     const onPlaying = () => markStarted();
     const onCanPlay = async () => {
@@ -147,7 +150,7 @@ export function playUrl(url: string, signal: AbortSignal, h: Hooks): Promise<Pla
     a.addEventListener("error", onErr);
     a.addEventListener("canplay", onCanPlay);
     a.addEventListener("playing", onPlaying);
-    timers.push(window.setTimeout(() => !started && finish("failed"), 15000)); // API lambat/gagal memuat
+    timers.push(window.setTimeout(() => !started && finish("failed"), startTimeoutMs)); // API lambat/gagal memuat
     try {
       a.pause();
       a.src = url;

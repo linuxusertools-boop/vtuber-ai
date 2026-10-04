@@ -3,8 +3,8 @@ import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
 import { BootLoader, MiniWave } from "@/components/Loaders";
-import { askAI, buildPrompt, parseAI, prepareTTS, isAbort, getYukiConfig, type Parsed, type TTSResult } from "@/lib/api";
-import { unlockAudio, playUrl, stopAudio, stopSpeech, type PlayResult } from "@/lib/audio";
+import { askAI, buildPrompt, parseAI, loadVoice, isAbort, getYukiConfig, type Parsed } from "@/lib/api";
+import { unlockAudio, playUrl, stopAudio, stopSpeech, typeText } from "@/lib/audio";
 
 const BG_URL = "https://cdn.nexray.eu.cc/download/rOyFPH";
 const MAX_INPUT = 300;
@@ -57,7 +57,7 @@ export default function VTuberChat() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (active && cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); }).catch(() => undefined); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (!active) return; if (cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); if (!cfg.tts.enabled) { setTtsEnabled(false); ttsOnRef.current = false; } }).catch(() => undefined); return () => { active = false; }; }, []);
 
   const viewerRef = useRef<Live2DViewerHandle>(null);
   useEffect(() => {
@@ -96,46 +96,97 @@ export default function VTuberChat() {
     return c;
   }, [stopMouth]);
 
-  // ── bubble muncul segera; satu klip Kev-TTS untuk seluruh jawaban ────────
+  // ── bubble + suara muncul BERSAMAAN ──────────────────────────────────────
+  // Urutan: "Menjawab pesan..." → "Menyiapkan suara..." (audio diunduh penuh dulu)
+  // → saat audio benar-benar mulai bunyi: bubble muncul & teks diketik mengikuti currentTime audio.
+  // Jika suara gagal/diblokir: teks tetap tampil dengan efek ketik biasa (pesan tidak pernah hilang).
   const presentMessage = useCallback(
-    async (msg: Parsed, signal: AbortSignal, speak: boolean) => {
+    async (msg: Parsed, signal: AbortSignal, speak: boolean, commit?: () => void) => {
       const voice = speak && ttsOnRef.current;
       const speechText = [msg.text1, msg.text2].filter(Boolean).join(" ").trim();
-
-      // Render bubble lebih dahulu: jangan menunggu API TTS/audio.
-      setCurrentMsg(msg);
-      setShown1(msg.text1);
-      setShown2(msg.text2);
-      setWaitLine2(false);
-      setRevealing(true);
-      setStage(voice ? "tts" : "idle");
-      viewerRef.current?.setExpression(msg.expression);
-
-      if (!voice || !speechText || signal.aborted) {
-        setStage("idle");
-        setRevealing(false);
-        return;
-      }
+      const t1 = msg.text1;
+      const t2 = msg.text2;
+      const total = t1.length + t2.length;
+      const reveal = (n: number) => {
+        const c = Math.max(0, Math.min(total, Math.round(n)));
+        setShown1(t1.slice(0, c));
+        setShown2(t2.slice(0, Math.max(0, c - t1.length)));
+      };
+      let begun = false;
+      const begin = () => {
+        if (begun || signal.aborted) return;
+        begun = true;
+        setCurrentMsg(msg);
+        setWaitLine2(false);
+        setStage("idle"); // indikator "menyiapkan suara" diganti bubble
+        setRevealing(true);
+        reveal(1);
+        viewerRef.current?.setExpression(msg.expression);
+      };
+      const typeFallback = async () => {
+        begin();
+        await typeText(t1 + t2, (x) => reveal(x.length), signal, 34);
+      };
 
       try {
-        // Satu permintaan API untuk seluruh jawaban mengurangi jeda antar-kalimat.
-        const tts = await prepareTTS(speechText, signal);
-        if (signal.aborted) return;
-        if (!tts) {
-          setStage("idle");
-          setRevealing(false);
-          return;
+        if (!voice || !speechText) {
+          await typeFallback();
+        } else {
+          setStage("tts");
+          setCurrentMsg(null);
+          setShown1("");
+          setShown2("");
+          const clip = await loadVoice(speechText, signal);
+          if (signal.aborted) {
+            clip?.release();
+            return;
+          }
+          if (!clip) {
+            await typeFallback();
+          } else {
+            let last = 0;
+            try {
+              await playUrl(
+                clip.src,
+                signal,
+                {
+                  onStart: () => {
+                    begin();
+                    startMouth();
+                  },
+                  onProgress: (ratio: number) => {
+                    const n = Math.ceil(Math.min(1, ratio * 1.03) * total);
+                    if (n !== last) {
+                      last = n;
+                      reveal(n);
+                    }
+                  },
+                },
+                clip.estSec,
+                clip.preloaded ? 6000 : 12000,
+              );
+            } finally {
+              clip.release();
+            }
+            stopMouth();
+            if (signal.aborted) return;
+            // suara tidak sempat mulai (diblokir autoplay / API error) → tetap ketik teksnya
+            if (!begun) await typeFallback();
+          }
         }
-        const outcome: PlayResult = await playUrl(tts.url, signal, {
-          onStart: startMouth,
-          onProgress: (_ratio: number) => undefined,
-        });
-        stopMouth();
-        if (signal.aborted || outcome === "aborted") return;
-        // Tidak memakai Google Translate atau speechSynthesis sebagai pengganti.
-        // Bubble tetap tampil jika API tidak dapat diakses atau autoplay diblokir.
+        if (signal.aborted) return;
+        reveal(total); // pastikan teks selalu tampil penuh di akhir
+        begin();
+        commit?.(); // masukkan ke riwayat chat & tutup bubble live dalam satu render
+        setStage("idle");
+        setRevealing(false);
       } catch {
         // TTS gagal tidak boleh menghilangkan pesan atau membuat chat macet.
+        if (!signal.aborted) {
+          begin();
+          reveal(total);
+          commit?.();
+        }
       } finally {
         if (!signal.aborted) {
           setStage("idle");
@@ -199,8 +250,10 @@ export default function VTuberChat() {
         msg = ERROR_MSG; // pesan error tampil instan, tanpa menunggu TTS
         spoken = false;
       }
-      await presentMessage(msg, signal, spoken);
-      if (!signal.aborted) setChatMessages((messages) => [...messages, { role: "assistant", text: `${msg.text1} ${msg.text2}`.trim() }]);
+      const finalMsg = msg;
+      await presentMessage(finalMsg, signal, spoken, () =>
+        setChatMessages((messages) => [...messages, { role: "assistant", text: `${finalMsg.text1} ${finalMsg.text2}`.trim() }]),
+      );
     } catch {
       // jaring pengaman terakhir: apa pun yang lolos, UI tidak boleh macet
       if (!signal.aborted) {
@@ -492,8 +545,8 @@ export default function VTuberChat() {
 
             <div className="dialogue-header overlay-header">
               <div className="overlay-status">
-                <i className={isListening ? "listening" : stage !== "idle" || revealing ? "thinking" : isTalking ? "speaking" : "ready"} />
-                <span>{isListening ? "LIVE · LISTENING" : stage === "ai" ? "LIVE · THINKING" : isTalking ? "LIVE · SPEAKING" : stage === "tts" ? "LIVE · VOICE" : "LIVE · READY"}</span>
+                <i className={isListening ? "listening" : stage !== "idle" ? "thinking" : isTalking || revealing ? "speaking" : "ready"} />
+                <span>{isListening ? "LIVE · LISTENING" : stage === "ai" ? "MENJAWAB PESAN…" : stage === "tts" ? "MENYIAPKAN SUARA…" : isTalking || revealing ? "LIVE · SPEAKING" : "LIVE · READY"}</span>
               </div>
               <div className={`overlay-wave${isTalking || isListening ? " active" : ""}`} aria-label={isListening ? "Mikrofon aktif" : isTalking ? "Yuki sedang berbicara" : "Audio standby"}>
                 {Array.from({ length: 6 }, (_, i) => <i key={i} style={{ animationDelay: `${i * 90}ms` }} />)}
@@ -546,7 +599,7 @@ export default function VTuberChat() {
               {stage !== "idle" && !(currentMsg && displayedText) && (
                 <div className="chat-message assistant-message typing-message">
                   <span className="message-avatar">✳</span>
-                  <div className="message-content"><span className="message-author">{aiName}</span><div className="typing-bubble"><i/><i/><i/><span>{stage === "tts" ? "Menyiapkan suara..." : "Sedang berpikir..."}</span></div></div>
+                  <div className="message-content"><span className="message-author">{aiName}</span><div className="typing-bubble"><i/><i/><i/><span>{stage === "tts" ? "Menyiapkan suara..." : "Menjawab pesan..."}</span></div></div>
                 </div>
               )}
               {currentMsg && displayedText && revealing && (

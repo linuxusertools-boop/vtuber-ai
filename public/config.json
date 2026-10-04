@@ -11,9 +11,10 @@
   "api": {
     "text": "/api/chat",
     "textFallback": "https://kev-ai.vercel.app/ai",
-    "voice": "/api/tts",
-    "voiceFallback": "https://kev-tts.vercel.app/animemoe"
+    "voice": "https://kev-tts.vercel.app/animemoe?text={text}",
+    "voiceProxy": "/api/tts"
   },
+  "tts": { "enabled": true, "timeoutMs": 20000, "attemptTimeoutMs": 10000, "retries": 1, "maxChars": 240 },
   "prompt": "Kamu adalah YUKI, assistant virtual yang hangat, cerdas, santai, suportif, dan berbicara dalam bahasa Indonesia secara natural. Gunakan profil pengguna hanya sebagai konteks, jangan mengarang fakta pribadi. Jika tidak tahu, katakan dengan jujur. Jawab ringkas tetapi membantu.",
   "appearance": { "theme": "midnight", "animations": true, "particles": true },
   "limits": { "maxInput": 300, "historyMessages": 8, "requestTimeoutMs": 22000 },

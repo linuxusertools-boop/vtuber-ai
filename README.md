@@ -15,7 +15,9 @@ Made by Kevsoft Studio. React + Vite, designed for Vercel deployment.
 Edit `public/config.json` before deployment. The frontend fetches it at runtime.
 - `aiName`: assistant display name
 - `api.text` / `api.textFallback`: text AI endpoints
-- `api.voice` / `api.voiceFallback`: TTS endpoints
+- `api.voice`: URL API suara, `{text}` diganti teks (default `https://kev-tts.vercel.app/animemoe?text={text}`)
+- `api.voiceProxy`: proxy `/api/tts` untuk mengatasi CORS (kosongkan `""` untuk mematikan)
+- `tts`: `enabled`, `timeoutMs`, `attemptTimeoutMs`, `retries`, `maxChars`
 - `prompt`: assistant personality and behavior
 - `appearance`, `limits`, `features`: presentation and request defaults
 
