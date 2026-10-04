@@ -570,3 +570,81 @@ button, input, textarea { max-width: 100%; }
   box-shadow: none !important;
   text-shadow: 0 2px 7px rgba(0,0,0,1), 0 0 10px rgba(0,0,0,.9) !important;
 }
+
+
+/* Screenshot fix: remove the global dark veil so the VTuber/background renders at full brightness. */
+.scene-root {
+  background: transparent !important;
+  isolation: isolate;
+}
+.scene-bg {
+  filter: saturate(1.08) brightness(1) contrast(1) !important;
+  opacity: 1 !important;
+}
+.scene-vignette {
+  display: none !important;
+  opacity: 0 !important;
+  background: transparent !important;
+}
+.scene-scanlines,
+.scene-grain {
+  display: none !important;
+  opacity: 0 !important;
+}
+.live2d-wrapper {
+  opacity: 1 !important;
+  filter: none !important;
+}
+.dialogue-panel,
+.dialogue-box {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.chat-feed,
+.chat-message,
+.message-content,
+.message-content p,
+.typing-bubble {
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.chat-home-btn {
+  position: fixed !important;
+  top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+  left: 14px !important;
+  right: auto !important;
+  z-index: 1000 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 9px 13px !important;
+  border: 1px solid rgba(225, 215, 255, .68) !important;
+  border-radius: 999px !important;
+  background: rgba(26, 22, 43, .88) !important;
+  color: #fff !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: .055em;
+  box-shadow: 0 4px 18px rgba(0,0,0,.18);
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  pointer-events: auto !important;
+}
+.fullscreen-btn {
+  position: fixed !important;
+  z-index: 1000 !important;
+  top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+  right: 14px !important;
+  background: rgba(26, 22, 43, .88) !important;
+  border-color: rgba(225, 215, 255, .68) !important;
+}
+@media (max-width: 650px) {
+  .chat-home-btn { top: calc(10px + env(safe-area-inset-top, 0px)) !important; left: 9px !important; min-height: 32px; padding: 7px 9px !important; font-size: 9px !important; }
+  .fullscreen-btn { top: calc(10px + env(safe-area-inset-top, 0px)) !important; right: 9px !important; min-height: 32px; }
+}

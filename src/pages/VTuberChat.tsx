@@ -487,7 +487,7 @@ export default function VTuberChat() {
       <div className="corner-frame corner-bl" />
       <div className="corner-frame corner-br" />
 
-      <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>← Dashboard</button>
+      <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>⌂ BACK TO HOME</button>
       <button className="fullscreen-btn" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? "Keluar layar penuh" : "Layar penuh"}>{isFullscreen ? "KELUAR FULLSCREEN" : "FULLSCREEN ⛶"}</button>
       <div className="name-plate">
         <div className="name-plate-inner">
