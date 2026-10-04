@@ -66,7 +66,7 @@
   opacity: 0.038;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 200px 200px;
-  animation: grain-shift 0.12s steps(1) infinite;
+  animation: none;
 }
 @keyframes grain-shift {
   0%   { transform: translate(0,0); }
@@ -574,3 +574,7 @@
   box-shadow: 0 0 20px rgba(156,156,156, 0.25);
   transform: translateY(-1px);
 }
+
+/* Dashboard page scrolling; the immersive chat remains viewport-sized. */
+html:has(.yuki-app), body:has(.yuki-app), #root:has(.yuki-app) { height:auto; min-height:100%; overflow:auto; }
+.chat-home-btn{position:absolute;z-index:30;top:22px;left:24px;padding:9px 13px;border:1px solid #ffffff24;border-radius:10px;background:#08080dcc;color:#ddd9f8;font:11px 'Noto Sans JP',sans-serif;backdrop-filter:blur(12px);transition:background .2s,transform .2s}.chat-home-btn:hover{background:#242137;transform:translateY(-1px)}

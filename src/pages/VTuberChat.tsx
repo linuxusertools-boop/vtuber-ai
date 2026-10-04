@@ -3,7 +3,7 @@ import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
 import { BootLoader, ThinkingLoader, MiniWave } from "@/components/Loaders";
-import { askAI, buildPrompt, parseAI, prepareTTS, sleep, isAbort, type Parsed, type TTSResult } from "@/lib/api";
+import { askAI, buildPrompt, parseAI, prepareTTS, sleep, isAbort, getYukiConfig, type Parsed, type TTSResult } from "@/lib/api";
 import { unlockAudio, playUrl, speakBrowser, typeText, stopAudio, stopSpeech, HAS_SPEECH, type PlayResult } from "@/lib/audio";
 
 const BG_URL = "https://cdn.nexray.eu.cc/download/rOyFPH";
@@ -14,11 +14,11 @@ const w = window as any;
 const IS_IFRAME: boolean = w.__IS_IFRAME__ ?? false;
 const HAS_WEBGL: boolean = w.__HAS_WEBGL__ ?? false;
 
-const SYSTEM_PROMPT = `Kamu adalah Huohuo, seorang gadis anime yang hidup dan nyata, bukan AI biasa. Kamu punya kepribadian yang hangat, sedikit malu-malu, kadang tsundere, sangat ekspresif, dan berbicara seperti karakter anime sungguhan dalam bahasa Indonesia. Kamu tidak pernah menyebut dirimu AI.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
+const SYSTEM_PROMPT = `Kamu adalah YUKI, assistant virtual dari Kevsoft Studio. Kamu punya kepribadian hangat, ekspresif, suportif, dan berbicara natural dalam bahasa Indonesia.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
 
 const GREETING: Parsed = {
   expression: "Senang",
-  text1: "Haii~ Aku Huohuo! Seneng banget kamu mau ngobrol sama aku ♡",
+  text1: "Haii~ Aku Yuki! Seneng banget kamu mau ngobrol sama aku ♡",
   text2: "Mau cerita apa hari ini? Aku dengerin semuanya~",
 };
 const ERROR_MSG: Parsed = {
@@ -48,6 +48,8 @@ export default function VTuberChat() {
   const [waitLine2, setWaitLine2] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [aiName, setAiName] = useState("YUKI");
+  useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (active && cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); }).catch(() => undefined); return () => { active = false; }; }, []);
 
   const viewerRef = useRef<Live2DViewerHandle>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -181,8 +183,23 @@ export default function VTuberChat() {
       let msg: Parsed;
       let spoken = true;
       try {
-        msg = parseAI(await askAI(buildPrompt(SYSTEM_PROMPT, prior, text), signal));
-        historyRef.current.push({ role: "assistant", text: `${msg.text1} ${msg.text2}`.trim() });
+        const cfg = await getYukiConfig();
+        let userContext = "";
+        try {
+          const profile = JSON.parse(localStorage.getItem("yuki.profile") || "{}");
+          const details = [profile.name ? `Nama panggilan pengguna: ${profile.name}` : "", profile.birthday ? `Tanggal lahir pengguna: ${profile.birthday}` : "", Array.isArray(profile.topics) && profile.topics.length ? `Topik favorit: ${profile.topics.join(", ")}` : "", profile.about ? `Tentang pengguna: ${profile.about}` : ""].filter(Boolean);
+          if (details.length) userContext = `\n\nKonteks profil pengguna (gunakan secara natural, jangan diulang tanpa alasan):\n${details.join("\n")}`;
+        } catch { /* corrupted local profile is ignored */ }
+        const configuredPrompt = `${cfg.prompt || SYSTEM_PROMPT}${userContext}\n\nBalas HANYA dengan format: {ekspresi}|{kalimat1}|{kalimat2}. Ekspresi: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius.\n\n${SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Selalu balas"))}`;
+        msg = parseAI(await askAI(buildPrompt(configuredPrompt, prior, text), signal));
+        const assistantText = `${msg.text1} ${msg.text2}`.trim();
+        historyRef.current.push({ role: "assistant", text: assistantText });
+        try {
+          const saved = JSON.parse(localStorage.getItem("yuki.chats") || "[]");
+          const userProfile = JSON.parse(localStorage.getItem("yuki.profile") || "{}");
+          saved.unshift({ title: text.slice(0, 64) || "Percakapan dengan Yuki", date: new Date().toLocaleString("id-ID"), preview: assistantText.slice(0, 180), user: userProfile.name || "", messages: [{ role: "user", text }, { role: "assistant", text: assistantText }] });
+          localStorage.setItem("yuki.chats", JSON.stringify(saved.slice(0, 50)));
+        } catch { /* local storage can be unavailable or full; chat still works */ }
       } catch (e) {
         if (isAbort(e) || signal.aborted) return;
         msg = ERROR_MSG; // pesan error tampil instan, tanpa menunggu TTS
@@ -287,16 +304,16 @@ export default function VTuberChat() {
         <DustParticles />
         <div className="name-plate">
           <div className="name-plate-inner">
-            <h1>Huohuo</h1>
+            <h1>{aiName}</h1>
             <div className="name-plate-rule" />
-            <span className="name-plate-sub">AI VTuber · by Kevin</span>
+            <span className="name-plate-sub">Personal AI Assistant · Kevsoft Studio</span>
           </div>
         </div>
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
           <div className="unlock-card">
             <div style={{ fontSize: "2rem", marginBottom: 14 }}>◐</div>
             <div style={{ color: "rgba(255,255,255,0.9)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1.05rem", lineHeight: 1.65, marginBottom: 20 }}>
-              Model Live2D Huohuo membutuhkan WebGL.<br />
+              Model Live2D Yuki membutuhkan WebGL.<br />
               <span style={{ opacity: 0.55, fontSize: "0.85rem" }}>Buka di tab baru untuk melihat karakter penuh.</span>
             </div>
             <button className="unlock-btn" onClick={openFull}>Buka Full View ↗</button>
@@ -320,11 +337,12 @@ export default function VTuberChat() {
       <div className="corner-frame corner-bl" />
       <div className="corner-frame corner-br" />
 
+      <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>← Dashboard</button>
       <div className="name-plate">
         <div className="name-plate-inner">
-          <h1>Huohuo</h1>
+          <h1>{aiName}</h1>
           <div className="name-plate-rule" />
-          <span className="name-plate-sub">AI VTuber · by Kevin</span>
+          <span className="name-plate-sub">Personal AI Assistant · Kevsoft Studio</span>
         </div>
       </div>
 
@@ -348,7 +366,7 @@ export default function VTuberChat() {
             {stage !== "idle" && <div className="busy-line" />}
 
             <div className="dialogue-header">
-              <span className="dialogue-speaker">Huohuo</span>
+              <span className="dialogue-speaker">Yuki</span>
               {currentMsg?.expression && stage === "idle" && <EmotionPill emotion={currentMsg.expression} />}
 
               <button
@@ -395,7 +413,7 @@ export default function VTuberChat() {
               <input
                 ref={inputRef}
                 className="chat-input"
-                placeholder="Ketik pesan untuk Huohuo..."
+                placeholder={`Ketik pesan untuk ${aiName}...`}
                 value={input}
                 maxLength={MAX_INPUT}
                 onChange={(e) => setInput(e.target.value)}
@@ -403,7 +421,7 @@ export default function VTuberChat() {
                 disabled={busy}
                 autoComplete="off"
                 enterKeyHint="send"
-                aria-label="Pesan untuk Huohuo"
+                aria-label="Pesan untuk Yuki"
                 autoFocus
               />
               <button className="send-btn" onClick={() => void sendMessage()} disabled={busy || !input.trim()} title="Kirim" aria-label="Kirim">

@@ -5,11 +5,11 @@ import "./index.css";
 
 // Error di luar React (CDN gagal, promise tak tertangani, dst.) tidak boleh mengganggu pengguna.
 window.addEventListener("error", (e) => {
-  console.warn("[Huohuo] error:", e.message);
+  console.warn("[YUKI] error:", e.message);
   e.preventDefault();
 });
 window.addEventListener("unhandledrejection", (e) => {
-  console.warn("[Huohuo] unhandled rejection:", e.reason);
+  console.warn("[YUKI] unhandled rejection:", e.reason);
   e.preventDefault();
 });
 

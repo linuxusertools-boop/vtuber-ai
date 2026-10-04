@@ -4,6 +4,13 @@
 // semua kegagalan berakhir sebagai nilai yang aman (bukan exception liar).
 // ─────────────────────────────────────────────────────────────────────────────
 
+type YukiConfig = { aiName?: string; prompt?: string; api?: { text?: string; textFallback?: string; voice?: string; voiceFallback?: string }; limits?: { requestTimeoutMs?: number; historyMessages?: number } };
+let configCache: YukiConfig | null = null;
+export async function getYukiConfig(): Promise<YukiConfig> {
+  if (configCache) return configCache;
+  try { const r = await fetch("/config.json", { cache: "no-cache" }); if (r.ok) configCache = await r.json() as YukiConfig; } catch { /* safe defaults below */ }
+  return configCache || (configCache = { aiName: "YUKI", prompt: "Kamu adalah YUKI, assistant yang ramah dan membantu.", api: { text: "/api/chat", textFallback: "https://kev-ai.vercel.app/ai", voice: "/api/tts", voiceFallback: "https://kev-tts.vercel.app/animemoe" } });
+}
 export const AI_URL = "https://kev-ai.vercel.app/ai";
 export const TTS_URL = "https://kev-tts.vercel.app/animemoe";
 
@@ -125,7 +132,7 @@ export function buildPrompt(
   user: string,
   maxChars = 3600,
 ): string {
-  const lines = history.map((h) => `${h.role === "user" ? "User" : "Huohuo"}: ${h.text.slice(0, 240)}`);
+  const lines = history.map((h) => `${h.role === "user" ? "User" : "Yuki"}: ${h.text.slice(0, 240)}`);
   const build = () =>
     `${system}\n\n${lines.length ? `Riwayat percakapan:\n${lines.join("\n")}\n\n` : ""}User: ${user}`;
   let p = build();
@@ -137,21 +144,19 @@ export function buildPrompt(
 }
 
 export async function askAI(prompt: string, signal: AbortSignal): Promise<string> {
-  const attempts: { via: "proxy" | "direct"; ms: number }[] = [
-    { via: "proxy", ms: 22000 },
-    { via: "direct", ms: 16000 },
-    { via: "proxy", ms: 22000 },
+  const cfg = await getYukiConfig();
+  const textEndpoint = cfg.api?.text || "/api/chat";
+  const fallbackEndpoint = cfg.api?.textFallback || AI_URL;
+  const timeout = Math.max(5000, Math.min(60000, cfg.limits?.requestTimeoutMs || 22000));
+  const attempts: { url: string; ms: number; proxy: boolean }[] = [
+    { url: textEndpoint, ms: timeout, proxy: textEndpoint.startsWith("/") },
+    { url: fallbackEndpoint, ms: Math.min(timeout, 16000), proxy: false },
   ];
   for (const a of attempts) {
     try {
-      const r =
-        a.via === "proxy"
-          ? await request(
-              "/api/chat",
-              { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: prompt }) },
-              a.ms, signal, "text",
-            )
-          : await request(`${AI_URL}?text=${encodeURIComponent(prompt)}`, {}, a.ms, signal, "text");
+      const r = a.proxy
+        ? await request(a.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: prompt }) }, a.ms, signal, "text")
+        : await request(`${a.url}?text=${encodeURIComponent(prompt)}`, {}, a.ms, signal, "text");
       if (r.ok) {
         const ans = extractAnswer(r.text);
         if (ans) return ans;
@@ -159,7 +164,7 @@ export async function askAI(prompt: string, signal: AbortSignal): Promise<string
     } catch (e) {
       if (isAbort(e)) throw e;
     }
-    await sleep(350, signal);
+    if (signal.aborted) throw new AbortedError();
   }
   throw new Error("ai-failed");
 }
@@ -285,9 +290,11 @@ export async function prepareTTS(text: string, signal: AbortSignal): Promise<TTS
   }
 
   const q = encodeURIComponent(clean);
-  const direct = `${TTS_URL}?text=${q}`;
+  const cfg = await getYukiConfig();
+  const voiceEndpoint = cfg.api?.voice || "/api/tts";
+  const direct = `${cfg.api?.voiceFallback || TTS_URL}?text=${q}`;
   const tries = [
-    { url: `/api/tts?text=${q}`, ms: 10000 },
+    { url: `${voiceEndpoint}?text=${q}`, ms: 10000 },
     { url: direct, ms: 9000 },
   ];
   for (const t of tries) {

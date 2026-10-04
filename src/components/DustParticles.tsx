@@ -59,7 +59,7 @@ function DustParticles() {
       };
     }
 
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 24; i++) {
       const p = spawnParticle();
       p.life = Math.random() * p.maxLife;
       p.alpha = Math.random() * 0.45;
@@ -69,7 +69,7 @@ function DustParticles() {
     function animate() {
       ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
 
-      if (particlesRef.current.length < 80 && Math.random() < 0.3) {
+      if (particlesRef.current.length < 32 && Math.random() < 0.12) {
         particlesRef.current.push(spawnParticle());
       }
 
