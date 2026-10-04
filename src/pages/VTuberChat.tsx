@@ -55,10 +55,15 @@ export default function VTuberChat() {
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
   useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (active && cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); }).catch(() => undefined); return () => { active = false; }; }, []);
 
   const viewerRef = useRef<Live2DViewerHandle>(null);
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const inputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<{ role: "user" | "assistant"; text: string }[]>([]);
   const ctrlRef = useRef<AbortController | null>(null);
@@ -511,14 +516,15 @@ export default function VTuberChat() {
           <div className={`dialogue-box${stage !== "idle" ? " is-busy" : ""}`}>
             {stage !== "idle" && <div className="busy-line" />}
 
-            <div className="dialogue-header">
-              <div className="chat-title-avatar">✳</div>
-              <div className="chat-title-copy">
-                <span className="dialogue-speaker">{aiName}</span>
-                <span className="chat-live-status"><i /> {stage !== "idle" || revealing ? "SEDANG MERESPONS" : "LIVE SESSION · SIAP"}</span>
+            <div className="dialogue-header overlay-header">
+              <div className="overlay-status">
+                <i className={isListening ? "listening" : stage !== "idle" || revealing ? "thinking" : isTalking ? "speaking" : "ready"} />
+                <span>{isListening ? "LIVE · LISTENING" : stage === "ai" ? "LIVE · THINKING" : isTalking ? "LIVE · SPEAKING" : stage === "tts" ? "LIVE · VOICE" : "LIVE · READY"}</span>
               </div>
-              {currentMsg?.expression && stage === "idle" && <EmotionPill emotion={currentMsg.expression} />}
-
+              <div className={`overlay-wave${isTalking || isListening ? " active" : ""}`} aria-label={isListening ? "Mikrofon aktif" : isTalking ? "Yuki sedang berbicara" : "Audio standby"}>
+                {Array.from({ length: 6 }, (_, i) => <i key={i} style={{ animationDelay: `${i * 90}ms` }} />)}
+              </div>
+              <span className="overlay-timer">{String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:{String(elapsedSeconds % 60).padStart(2, "0")}</span>
               <button
                 className={`tts-btn${ttsEnabled ? " on" : ""}`}
                 onClick={toggleTTS}
@@ -539,7 +545,6 @@ export default function VTuberChat() {
                   </svg>
                 )}
               </button>
-
               {IS_IFRAME && <button className="full-btn" onClick={openFull}>FULL ↗</button>}
             </div>
 
