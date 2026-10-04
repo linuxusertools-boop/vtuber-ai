@@ -14,7 +14,7 @@ const w = window as any;
 const IS_IFRAME: boolean = w.__IS_IFRAME__ ?? false;
 const HAS_WEBGL: boolean = w.__HAS_WEBGL__ ?? false;
 
-const SYSTEM_PROMPT = `Kamu adalah YUKI, assistant virtual dari Kevsoft Studio. Kamu punya kepribadian hangat, ekspresif, suportif, dan berbicara natural dalam bahasa Indonesia.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
+const SYSTEM_PROMPT = `Kamu adalah YUKI, assistant virtual dari Kevsoft Studio. Kamu punya kepribadian hangat, ekspresif, suportif, dan berbicara natural dalam bahasa Indonesia. Developer kamu adalah Kevsoft, dan owner-nya adalah Kevin. Jika ditanya siapa developer/pembuatmu, jawab dengan tepat: "Kevsoft, yang ownernya : kevin". Jangan pernah menyebut nama karakter sebelumnya atau nama lain selain YUKI.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
 
 const GREETING: Parsed = {
   expression: "Senang",
@@ -197,7 +197,11 @@ export default function VTuberChat() {
     try {
       let msg: Parsed;
       let spoken = true;
-      try {
+      const asksDeveloper = /\b(siapa|who|nama)\b.*\b(developer|pembuat|pengembang|owner|pemilik)\b|\b(developer|pembuat|pengembang|owner|pemilik)\b.*\b(siapa|who|nama)\b/i.test(text);
+      if (asksDeveloper) {
+        msg = { expression: "Senang", text1: "Kevsoft, yang ownernya : kevin", text2: "" };
+        historyRef.current.push({ role: "assistant", text: msg.text1 });
+      } else try {
         const cfg = await getYukiConfig();
         let userContext = "";
         try {
@@ -508,7 +512,6 @@ export default function VTuberChat() {
       {showUI && (
         <div className={`dialogue-panel${chatMode === "KLC" ? " klc-overlay" : ""}`}>
           <div className={`dialogue-box${stage !== "idle" ? " is-busy" : ""}`}>
-            {stage !== "idle" && <div className="busy-line" />}
 
             <div className="dialogue-header">
               <div className="chat-title-avatar">✳</div>
@@ -546,7 +549,7 @@ export default function VTuberChat() {
               {chatMessages.length === 0 && currentMsg && displayedText && stage === "idle" && !revealing && (
                 <div className="chat-message assistant-message">
                   <span className="message-avatar">✳</span>
-                  <div className="message-content"><span className="message-author">{aiName}</span><p>{displayedText}{revealing && <span className="dialogue-cursor" />}{waitLine2 && <MiniWave />}</p></div>
+                  <div className="message-content"><span className="message-author">{aiName}</span><p>{displayedText}{waitLine2 && <MiniWave />}</p></div>
                 </div>
               )}
               {chatMessages.map((message, index) => (
@@ -568,7 +571,7 @@ export default function VTuberChat() {
               {currentMsg && displayedText && revealing && (
                 <div className="chat-message assistant-message live-response">
                   <span className="message-avatar">✳</span>
-                  <div className="message-content"><span className="message-author">{aiName} <small>LIVE</small></span><p>{displayedText}{revealing && !waitLine2 && <span className="dialogue-cursor" />}{waitLine2 && <MiniWave />}</p></div>
+                  <div className="message-content"><span className="message-author">{aiName} <small>LIVE</small></span><p>{displayedText}{waitLine2 && <MiniWave />}</p></div>
                 </div>
               )}
               <div className="chat-feed-end" />

@@ -15,7 +15,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[Huohuo] render error:", error, info.componentStack);
+    console.error("[YUKI] render error:", error, info.componentStack);
     // pulihkan otomatis maksimal 2 kali, setelah itu minta pengguna memuat ulang
     if (this.state.attempt < 2) {
       this.timer = window.setTimeout(
@@ -33,7 +33,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
     if (!this.state.failed) return <div key={this.state.attempt} style={{ height: "100%" }}>{this.props.children}</div>;
     return (
       <div className="crash">
-        <div className="crash-title">HUOHUO</div>
+        <div className="crash-title">YUKI</div>
         <div className="crash-sub">
           {this.state.attempt < 2 ? "menyambung ulang…" : "ada yang tersendat"}
         </div>

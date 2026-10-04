@@ -594,3 +594,56 @@ button, input, textarea { max-width: 100%; }
   .scene-root .name-plate h1 { font-size: 18px; }
   .scene-root .name-plate-sub { font-size: 7px; letter-spacing: .16em; }
 }
+
+
+/* Clean live-chat overlay: remove response line/frame and soften older bubbles. */
+.scene-root .dialogue-box,
+.scene-root.klc-mode .dialogue-box,
+.scene-root:not(.klc-mode) .dialogue-box {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.scene-root .dialogue-box::before,
+.scene-root .dialogue-box::after { display: none !important; content: none !important; }
+.scene-root .dialogue-header,
+.scene-root.klc-mode .dialogue-header,
+.scene-root:not(.klc-mode) .dialogue-header {
+  border-bottom: 0 !important;
+  padding-bottom: 4px !important;
+  margin-bottom: 5px !important;
+}
+.scene-root .busy-line,
+.scene-root .dialogue-cursor { display: none !important; }
+.scene-root .chat-feed {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,.12) 18%, rgba(0,0,0,.55) 40%, #000 64%);
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,.12) 18%, rgba(0,0,0,.55) 40%, #000 64%);
+  scrollbar-width: none !important;
+  gap: 8px !important;
+}
+.scene-root .chat-feed::-webkit-scrollbar { display: none !important; }
+.scene-root .chat-message { transition: opacity .25s ease, filter .25s ease; }
+/* Keep the three newest message rows crisp; older history gently blurs away.
+   chat-feed-end is the final child, so n+5 means older than the latest three. */
+.scene-root .chat-message:nth-last-child(n+5) {
+  opacity: .24 !important;
+  filter: blur(2.6px) !important;
+  pointer-events: none;
+}
+.scene-root .message-content p {
+  border: 0 !important;
+  box-shadow: none !important;
+  background: rgba(20,16,36,.36) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.scene-root .user-message .message-content p { background: rgba(105,73,137,.3) !important; }
+.scene-root .typing-bubble { border: 0 !important; background: transparent !important; padding-left: 0 !important; }
+.scene-root .chat-compose-hint { border: 0 !important; }
+@media (max-width: 650px) {
+  .scene-root .dialogue-box { padding-left: 8px !important; padding-right: 8px !important; }
+  .scene-root .message-content p { padding: 7px 10px !important; }
+}

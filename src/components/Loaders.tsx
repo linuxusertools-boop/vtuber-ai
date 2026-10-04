@@ -68,7 +68,7 @@ export function BootLoader({ pct }: { pct: number }) {
   const shown = useSmoothProgress(pct);
   const label = shown < 25 ? "initializing" : shown < 80 ? "loading model" : "almost ready";
   return (
-    <div className="boot" role="status" aria-live="polite" aria-label="Memuat Huohuo">
+    <div className="boot" role="status" aria-live="polite" aria-label="Memuat YUKI">
       <div className="boot-rings" aria-hidden>
         <i /><i /><i />
       </div>
@@ -84,7 +84,7 @@ export function BootLoader({ pct }: { pct: number }) {
         <circle className="boot-dash" cx="100" cy="100" r="80" fill="none" stroke="#fff" strokeWidth="0.8" strokeDasharray="2 7" />
       </svg>
       <div className="boot-title" aria-hidden>
-        {"HUOHUO".split("").map((c, i) => (
+        {"YUKI".split("").map((c, i) => (
           <span key={i} style={{ "--i": i } as CSSProperties}>{c}</span>
         ))}
       </div>
@@ -113,7 +113,7 @@ export const ThinkingLoader = memo(function ThinkingLoader({ stage }: { stage: "
     return () => clearInterval(id);
   }, [stage]);
   return (
-    <div className="think" role="status" aria-live="polite" aria-label="Huohuo sedang menyiapkan jawaban">
+    <div className="think" role="status" aria-live="polite" aria-label="YUKI sedang menyiapkan jawaban">
       <div className="think-wave" aria-hidden>
         {WAVE.map((k) => (
           <i key={k} style={{ "--k": k } as CSSProperties} />
