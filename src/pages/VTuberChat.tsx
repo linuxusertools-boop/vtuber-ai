@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, type CSSProperties, type Keyb
 import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer";
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
-import { BootLoader, ThinkingLoader, MiniWave } from "@/components/Loaders";
+import { BootLoader, MiniWave } from "@/components/Loaders";
 import { askAI, buildPrompt, parseAI, prepareTTS, sleep, isAbort, getYukiConfig, type Parsed, type TTSResult } from "@/lib/api";
 import { unlockAudio, playUrl, speakBrowser, typeText, stopAudio, stopSpeech, HAS_SPEECH, type PlayResult } from "@/lib/audio";
 
@@ -49,6 +49,8 @@ export default function VTuberChat() {
   const [isTalking, setIsTalking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [aiName, setAiName] = useState("YUKI");
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  const chatFeedRef = useRef<HTMLDivElement>(null);
   useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (active && cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); }).catch(() => undefined); return () => { active = false; }; }, []);
 
   const viewerRef = useRef<Live2DViewerHandle>(null);
@@ -171,6 +173,7 @@ export default function VTuberChat() {
     const { signal } = ctrl;
     const prior = historyRef.current.slice(-8);
     historyRef.current.push({ role: "user", text });
+    setChatMessages((messages) => [...messages, { role: "user", text }]);
     setInput("");
     setCurrentMsg(null);
     setShown1("");
@@ -206,6 +209,7 @@ export default function VTuberChat() {
         spoken = false;
       }
       await presentMessage(msg, signal, spoken);
+      if (!signal.aborted) setChatMessages((messages) => [...messages, { role: "assistant", text: `${msg.text1} ${msg.text2}`.trim() }]);
     } catch {
       // jaring pengaman terakhir: apa pun yang lolos, UI tidak boleh macet
       if (!signal.aborted) {
@@ -291,6 +295,10 @@ export default function VTuberChat() {
   const onError = useCallback(() => setLive2dFailed(true), []);
 
   const displayedText = shown2 ? `${shown1}\n${shown2}` : shown1;
+  useEffect(() => {
+    const feed = chatFeedRef.current;
+    if (feed) feed.scrollTop = feed.scrollHeight;
+  }, [chatMessages, shown1, shown2, stage, revealing, waitLine2]);
   const openFull = () => window.open(window.location.href, "_blank", "noopener,noreferrer");
   const bgStyle = { "--bg-url": `url(${BG_URL})` } as CSSProperties;
 
@@ -366,7 +374,11 @@ export default function VTuberChat() {
             {stage !== "idle" && <div className="busy-line" />}
 
             <div className="dialogue-header">
-              <span className="dialogue-speaker">Yuki</span>
+              <div className="chat-title-avatar">✳</div>
+              <div className="chat-title-copy">
+                <span className="dialogue-speaker">{aiName}</span>
+                <span className="chat-live-status"><i /> {stage !== "idle" || revealing ? "SEDANG MERESPONS" : "LIVE SESSION · SIAP"}</span>
+              </div>
               {currentMsg?.expression && stage === "idle" && <EmotionPill emotion={currentMsg.expression} />}
 
               <button
@@ -390,25 +402,42 @@ export default function VTuberChat() {
                 )}
               </button>
 
-              {IS_IFRAME && (
-                <button className="full-btn" onClick={openFull}>FULL ↗</button>
-              )}
+              {IS_IFRAME && <button className="full-btn" onClick={openFull}>FULL ↗</button>}
             </div>
 
-            <div className="dialogue-text">
-              {stage !== "idle" ? (
-                <ThinkingLoader stage={stage} />
-              ) : displayedText ? (
-                <>
-                  {displayedText}
-                  {revealing && !waitLine2 && <span className="dialogue-cursor" />}
-                  {waitLine2 && <MiniWave />}
-                </>
-              ) : (
-                <span className="dialogue-hint">Apa yang ingin kamu ceritakan?</span>
+            <div className="chat-feed" ref={chatFeedRef} aria-live="polite" aria-label="Riwayat percakapan">
+              {chatMessages.length === 0 && currentMsg && displayedText && stage === "idle" && !revealing && (
+                <div className="chat-message assistant-message">
+                  <span className="message-avatar">✳</span>
+                  <div className="message-content"><span className="message-author">{aiName}</span><p>{displayedText}{revealing && <span className="dialogue-cursor" />}{waitLine2 && <MiniWave />}</p></div>
+                </div>
               )}
+              {chatMessages.map((message, index) => (
+                <div className={`chat-message ${message.role === "user" ? "user-message" : "assistant-message"}`} key={`${index}-${message.role}`}>
+                  {message.role === "assistant" && <span className="message-avatar">✳</span>}
+                  <div className="message-content">
+                    <span className="message-author">{message.role === "user" ? "Kamu" : aiName}</span>
+                    <p>{message.text}</p>
+                  </div>
+                  {message.role === "user" && <span className="message-avatar user-avatar">☺</span>}
+                </div>
+              ))}
+              {stage !== "idle" && (
+                <div className="chat-message assistant-message typing-message">
+                  <span className="message-avatar">✳</span>
+                  <div className="message-content"><span className="message-author">{aiName}</span><div className="typing-bubble"><i/><i/><i/><span>{stage === "tts" ? "Menyiapkan suara..." : "Sedang berpikir..."}</span></div></div>
+                </div>
+              )}
+              {currentMsg && displayedText && revealing && (
+                <div className="chat-message assistant-message live-response">
+                  <span className="message-avatar">✳</span>
+                  <div className="message-content"><span className="message-author">{aiName} <small>LIVE</small></span><p>{displayedText}{revealing && !waitLine2 && <span className="dialogue-cursor" />}{waitLine2 && <MiniWave />}</p></div>
+                </div>
+              )}
+              <div className="chat-feed-end" />
             </div>
 
+            <div className="chat-compose-hint"><span>✦</span> Ceritakan apa saja, aku di sini untuk mendengarkan.</div>
             <div className="input-wrapper">
               <input
                 ref={inputRef}
