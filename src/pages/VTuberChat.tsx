@@ -28,6 +28,7 @@ const ERROR_MSG: Parsed = {
 };
 
 type Stage = "idle" | "ai" | "tts";
+type ChatMode = "KVC" | "KLC";
 
 function EmotionPill({ emotion }: { emotion: string }) {
   return <span className="emotion-pill">{emotion}</span>;
@@ -35,6 +36,9 @@ function EmotionPill({ emotion }: { emotion: string }) {
 
 export default function VTuberChat() {
   const [input, setInput] = useState("");
+  const [chatMode, setChatMode] = useState<ChatMode>("KVC");
+  const [micActive, setMicActive] = useState(false);
+  const [micStatus, setMicStatus] = useState("Tekan mulai untuk ngobrol");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<Stage>("idle");
   const [live2dReady, setLive2dReady] = useState(false);
@@ -58,6 +62,10 @@ export default function VTuberChat() {
   const historyRef = useRef<{ role: "user" | "assistant"; text: string }[]>([]);
   const ctrlRef = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
+  const speechRecognitionRef = useRef<any>(null);
+  const voiceModeActiveRef = useRef(false);
+  const modeRef = useRef<ChatMode>("KVC");
+  const sendMessageRef = useRef<(overrideText?: string) => Promise<void>>(async () => undefined);
   const ttsOnRef = useRef(true);
   const greetedRef = useRef(false);
 
@@ -162,8 +170,8 @@ export default function VTuberChat() {
   );
 
   // ── kirim pesan ──────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async () => {
-    const text = input.trim().slice(0, MAX_INPUT);
+  const sendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim().slice(0, MAX_INPUT);
     if (!text || busyRef.current) return;
     unlockAudio(); // harus sinkron di dalam gestur pengguna (syarat iOS/Safari)
 
@@ -230,6 +238,114 @@ export default function VTuberChat() {
       }
     }
   }, [input, newRun, presentMessage, stopMouth]);
+
+  sendMessageRef.current = sendMessage;
+
+  const startListening = useCallback(() => {
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setMicStatus("Browser ini belum mendukung pengenalan suara. Coba Chrome terbaru.");
+      setMicActive(false);
+      voiceModeActiveRef.current = false;
+      return;
+    }
+    try {
+      if (!speechRecognitionRef.current) {
+        const recognition = new SpeechRecognitionCtor();
+        recognition.lang = "id-ID";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.onstart = () => { setMicActive(true); setMicStatus("Mendengarkan kamu..."); };
+        recognition.onerror = (event: any) => {
+          if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
+            voiceModeActiveRef.current = false;
+            setMicActive(false);
+            setMicStatus("Izin mikrofon ditolak. Aktifkan izin mikrofon di browser.");
+          } else if (event?.error !== "no-speech" && event?.error !== "aborted") {
+            setMicStatus("Suara belum tertangkap. Coba bicara lagi.");
+          }
+        };
+        recognition.onresult = (event: any) => {
+          let finalText = "";
+          let interimText = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const part = event.results[i]?.[0]?.transcript || "";
+            if (event.results[i].isFinal) finalText += part; else interimText += part;
+          }
+          if (interimText.trim()) setMicStatus(`Mendengar: “${interimText.trim()}”`);
+          if (finalText.trim()) {
+            const spokenText = finalText.trim().slice(0, MAX_INPUT);
+            setMicStatus("Yuki sedang membalas...");
+            try { recognition.stop(); } catch { /* recognition may already be stopped */ }
+            void sendMessageRef.current(spokenText);
+          }
+        };
+        recognition.onend = () => {
+          if (modeRef.current === "KLC" && voiceModeActiveRef.current) {
+            window.setTimeout(() => {
+              if (modeRef.current === "KLC" && voiceModeActiveRef.current && !busyRef.current) {
+                try { speechRecognitionRef.current?.start(); } catch { /* already starting */ }
+              }
+            }, 500);
+          } else {
+            setMicActive(false);
+          }
+        };
+        speechRecognitionRef.current = recognition;
+      }
+      speechRecognitionRef.current.start();
+    } catch {
+      // start() may throw if the recognizer is already running; the existing session remains active.
+    }
+  }, []);
+
+  useEffect(() => {
+    modeRef.current = chatMode;
+    if (chatMode !== "KLC") {
+      voiceModeActiveRef.current = false;
+      setMicActive(false);
+      try { speechRecognitionRef.current?.stop(); } catch { /* ignore */ }
+      setMicStatus("Tekan mulai untuk ngobrol");
+    } else if (voiceModeActiveRef.current && !busyRef.current) {
+      const timer = window.setTimeout(startListening, 250);
+      return () => window.clearTimeout(timer);
+    }
+  }, [chatMode, startListening, busy]);
+
+  useEffect(() => () => {
+    voiceModeActiveRef.current = false;
+    try { speechRecognitionRef.current?.abort(); } catch { /* ignore */ }
+  }, []);
+
+  const toggleVoiceMode = () => {
+    if (voiceModeActiveRef.current) {
+      voiceModeActiveRef.current = false;
+      setMicActive(false);
+      setMicStatus("Mode suara dijeda");
+      try { speechRecognitionRef.current?.stop(); } catch { /* ignore */ }
+      return;
+    }
+    unlockAudio();
+    voiceModeActiveRef.current = true;
+    setMicStatus("Meminta akses mikrofon...");
+    startListening();
+  };
+
+  const toggleFullscreen = async () => {
+    const root = document.querySelector(".scene-root") as HTMLElement | null;
+    try {
+      if (!document.fullscreenElement && root?.requestFullscreen) {
+        await root.requestFullscreen();
+      } else if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else {
+        setMicStatus("Untuk layar penuh tanpa bar browser, tambahkan YUKI ke layar utama / install sebagai aplikasi.");
+      }
+    } catch {
+      setMicStatus("Fullscreen tidak didukung browser ini. Coba mode layar penuh dari menu browser.");
+    }
+  };
 
   const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -346,6 +462,7 @@ export default function VTuberChat() {
       <div className="corner-frame corner-br" />
 
       <button className="chat-home-btn" onClick={() => { window.location.href = "/home"; }}>← Dashboard</button>
+      <button className="fullscreen-btn" onClick={() => void toggleFullscreen()} aria-label="Layar penuh" title="Layar penuh">⛶ <span>FULLSCREEN</span></button>
       <div className="name-plate">
         <div className="name-plate-inner">
           <h1>{aiName}</h1>
@@ -405,6 +522,10 @@ export default function VTuberChat() {
               {IS_IFRAME && <button className="full-btn" onClick={openFull}>FULL ↗</button>}
             </div>
 
+            <div className="mode-switch" role="tablist" aria-label="Mode percakapan">
+              <button className={chatMode === "KVC" ? "active" : ""} onClick={() => setChatMode("KVC")} role="tab" aria-selected={chatMode === "KVC"}><span>KVC</span><small>Kev Voice Chat</small></button>
+              <button className={chatMode === "KLC" ? "active" : ""} onClick={() => setChatMode("KLC")} role="tab" aria-selected={chatMode === "KLC"}><span>KLC</span><small>Kev Live Chat</small></button>
+            </div>
             <div className="chat-feed" ref={chatFeedRef} aria-live="polite" aria-label="Riwayat percakapan">
               {chatMessages.length === 0 && currentMsg && displayedText && stage === "idle" && !revealing && (
                 <div className="chat-message assistant-message">
@@ -437,8 +558,8 @@ export default function VTuberChat() {
               <div className="chat-feed-end" />
             </div>
 
-            <div className="chat-compose-hint"><span>✦</span> Ceritakan apa saja, aku di sini untuk mendengarkan.</div>
-            <div className="input-wrapper">
+            <div className="chat-compose-hint"><span>✦</span> {chatMode === "KLC" ? micStatus : "Ceritakan apa saja, aku di sini untuk mendengarkan."}</div>
+            {chatMode === "KVC" ? <div className="input-wrapper">
               <input
                 ref={inputRef}
                 className="chat-input"
@@ -466,7 +587,13 @@ export default function VTuberChat() {
                   </svg>
                 )}
               </button>
-            </div>
+            </div> : <div className={`voice-mode-panel${micActive ? " listening" : ""}`}>
+              <button className="voice-talk-btn" onClick={toggleVoiceMode} aria-pressed={voiceModeActiveRef.current}>
+                <span className="voice-talk-icon">{voiceModeActiveRef.current ? "Ⅱ" : "🎙"}</span>
+                <span>{voiceModeActiveRef.current ? "Jeda ngobrol" : "Mulai ngobrol"}</span>
+              </button>
+              <div className="voice-orb" aria-hidden="true"><i/><i/><i/><i/><i/></div>
+            </div>}
           </div>
         </div>
       )}
