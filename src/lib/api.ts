@@ -180,7 +180,6 @@ function stripMarkdown(s: string): string {
     .replace(/^#+\s*/gm, "")
     .replace(/\r/g, "")
     .replace(/^\s*(yuki|assistant)\s*:\s*/i, "")
-    .replace(/huo\s*huo/gi, "Yuki")
     .trim();
 }
 

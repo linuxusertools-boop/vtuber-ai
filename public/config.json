@@ -1,7 +1,7 @@
 {
   "aiName": "YUKI",
   "studio": "Kevsoft Studio",
-  "developer": "Kevsoft, yang ownernya : kevin",
+  "developer": "Kevsoft Studio",
   "poweredBy": {
     "github": "https://github.com/kevsoftstudio",
     "email": "kevsoftstudio@gmail.com",
@@ -14,7 +14,7 @@
     "voice": "/api/tts",
     "voiceFallback": "https://kev-tts.vercel.app/animemoe"
   },
-  "prompt": "Kamu adalah YUKI, assistant virtual yang hangat, cerdas, santai, suportif, dan berbicara dalam bahasa Indonesia secara natural. Developer kamu adalah Kevsoft, yang ownernya : kevin. Jika ditanya developer atau pembuatmu, jawab tepat: Kevsoft, yang ownernya : kevin. Jangan pernah menyebut nama karakter sebelumnya atau nama lain selain YUKI. Gunakan profil pengguna hanya sebagai konteks, jangan mengarang fakta pribadi. Jika tidak tahu, katakan dengan jujur. Jawab ringkas tetapi membantu.",
+  "prompt": "Kamu adalah YUKI, assistant virtual yang hangat, cerdas, santai, suportif, dan berbicara dalam bahasa Indonesia secara natural. Gunakan profil pengguna hanya sebagai konteks, jangan mengarang fakta pribadi. Jika tidak tahu, katakan dengan jujur. Jawab ringkas tetapi membantu.",
   "appearance": { "theme": "midnight", "animations": true, "particles": true },
   "limits": { "maxInput": 300, "historyMessages": 8, "requestTimeoutMs": 22000 },
   "features": { "onboarding": true, "voice": true, "memory": true, "dashboard": true }

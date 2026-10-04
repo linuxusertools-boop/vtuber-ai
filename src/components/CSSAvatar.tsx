@@ -5,7 +5,7 @@ interface Props {
   talking?: boolean;
 }
 
-// YUKI avatar styling — light purple-white hair and teal/green eyes
+// Yuki — light purple-white hair, teal/green eyes, staff-bearer look
 const expressionStyles: Record<string, {
   eyeScale?: number;
   browY?: number;
@@ -106,7 +106,7 @@ export default function CSSAvatar({ expression = "Senang", talking = false }: Pr
         transition: "transform 0.12s ease-out",
         marginBottom: -30,
       }}>
-        {/* Body / robe — YUKI wears a flowing white/teal robe */}
+        {/* Body / robe — Haohao wears a flowing white/teal robe */}
         <div style={{
           position: "absolute", bottom: 0, left: "50%",
           transform: "translateX(-50%)",

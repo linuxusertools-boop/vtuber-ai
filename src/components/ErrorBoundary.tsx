@@ -15,7 +15,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[YUKI] render error:", error, info.componentStack);
+    console.error("[Yuki] render error:", error, info.componentStack);
     // pulihkan otomatis maksimal 2 kali, setelah itu minta pengguna memuat ulang
     if (this.state.attempt < 2) {
       this.timer = window.setTimeout(

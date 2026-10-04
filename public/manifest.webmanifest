@@ -1,16 +1,13 @@
 {
   "name": "YUKI — Kevsoft Studio",
   "short_name": "YUKI",
-  "description": "Live AI VTuber chat with Kevsoft Studio",
-  "lang": "id-ID",
-  "start_url": "/",
+  "description": "YUKI personal AI assistant with KVC and KLC live voice modes",
+  "start_url": "/chat",
   "scope": "/",
   "display": "standalone",
   "display_override": ["fullscreen", "standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#090714",
-  "theme_color": "#090714",
-  "icons": [
-    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
-  ]
+  "background_color": "#0b0917",
+  "theme_color": "#0b0917",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }
