@@ -36,6 +36,14 @@ export function loadLibs(): Promise<Libs> {
   if (cached) return cached;
   cached = (async () => {
     const errors: string[] = [];
+    // Rute 1: paket npm yang di-bundle (paling andal, tanpa CDN)
+    try {
+      const m: any = await withTimeout(import("./libs.npm"), 30000, "npm");
+      if (m?.THREE?.WebGLRenderer && m?.GLTFLoader && m?.V?.VRMLoaderPlugin) return { THREE: m.THREE, GLTFLoader: m.GLTFLoader, V: m.V, from: "npm" };
+      errors.push("npm: modul tidak lengkap");
+    } catch (e: any) {
+      errors.push(`npm: ${e?.message ?? e}`);
+    }
     for (const s of SETS) {
       try {
         const [THREE, gl, V] = await withTimeout(Promise.all([dyn(s.three), dyn(s.gltf), dyn(s.vrm)]), 25000, s.name);

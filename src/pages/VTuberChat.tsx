@@ -46,6 +46,8 @@ export default function VTuberChat() {
   const [live2dReady, setLive2dReady] = useState(false);
   const [live2dFailed, setLive2dFailed] = useState(false);
   const [vrmWhy, setVrmWhy] = useState("");
+  const [vrmKey, setVrmKey] = useState(0);
+  const vrmTries = useRef(0);
   const [showUI, setShowUI] = useState(!HAS_WEBGL);
   const [loadPct, setLoadPct] = useState(0);
   const [currentMsg, setCurrentMsg] = useState<Parsed | null>(null);
@@ -465,8 +467,14 @@ export default function VTuberChat() {
     [],
   );
 
-  const onLoad = useCallback(() => setLive2dReady(true), []);
-  const onError = useCallback((why?: string) => { setLive2dFailed(true); if (why) { setVrmWhy(why); window.setTimeout(() => setVrmWhy(""), 12000); } }, []);
+  const onLoad = useCallback(() => { setLive2dReady(true); setLive2dFailed(false); setVrmWhy(""); vrmTries.current = 0; }, []);
+  const onError = useCallback((why?: string) => { setLive2dFailed(true); if (why) setVrmWhy(why); }, []);
+  // gagal → coba lagi otomatis (maks 3×); VRM menggantikan avatar cadangan begitu berhasil
+  useEffect(() => {
+    if (!live2dFailed || live2dReady || vrmTries.current >= 3) return;
+    const id = window.setTimeout(() => { vrmTries.current += 1; setVrmKey((k) => k + 1); }, 6000);
+    return () => clearTimeout(id);
+  }, [live2dFailed, live2dReady, vrmKey]);
 
   const displayedText = shown2 ? `${shown1}\n${shown2}` : shown1;
   useEffect(() => {
@@ -533,7 +541,7 @@ export default function VTuberChat() {
 
       {HAS_WEBGL && (
         <div className="live2d-wrapper">
-          <VRMViewer ref={viewerRef} onLoad={onLoad} onError={onError} onProgress={setLoadPct} />
+          <VRMViewer key={vrmKey} ref={viewerRef} onLoad={onLoad} onError={onError} onProgress={setLoadPct} />
         </div>
       )}
 
@@ -543,9 +551,9 @@ export default function VTuberChat() {
         </div>
       )}
 
-      {vrmWhy && (
+      {vrmWhy && !live2dReady && (
         <div style={{ position: "fixed", left: 10, bottom: 10, zIndex: 9999, maxWidth: "min(92vw,420px)", padding: "8px 12px", borderRadius: 10, background: "rgba(20,16,32,.88)", color: "#fff", font: "12px/1.4 system-ui", border: "1px solid rgba(255,255,255,.18)" }}>
-          Model 3D tidak bisa dimuat — memakai avatar cadangan.<br /><span style={{ opacity: 0.7 }}>{vrmWhy.slice(0, 220)}</span>
+          Model 3D belum tampil — avatar cadangan dipakai sementara.<br /><span style={{ opacity: 0.7 }}>{vrmWhy.slice(0, 260)}</span><br /><button onClick={() => { vrmTries.current = 0; setVrmKey((k) => k + 1); }} style={{ marginTop: 6, padding: "4px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.12)", color: "#fff", cursor: "pointer" }}>Muat ulang model 3D</button>
         </div>
       )}
       {!showUI && <BootLoader pct={loadPct} />}

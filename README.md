@@ -46,5 +46,6 @@ Onboarding/profile and chat history are stored in this browser's localStorage. T
 - Sub-agent gerakan: `src/vrm/director.ts` (lokal, fuzzy ID/EN) + opsional LLM (`motion.subagent`) dengan validasi ketat.
 - Pustaka gerakan: `src/vrm/motions.ts` (±60 gerakan + beat bicara + gerakan spontan). Tambah gerakan = tambah satu objek.
 - Efek panggung dapat distel di `config.json → scene` (`quality`: auto/high/mid/low, `light`, `mist`, `rays`, `particles`, `offsetY`).
-- three.js & three-vrm dimuat dari CDN saat runtime (`src/vrm/loader.ts`: esm.sh lalu jsdelivr) — tidak perlu paket npm tambahan. Perlu internet saat pertama membuka.
+- three.js & three-vrm: rute utama dari npm (di-bundle, WAJIB `npm install` setelah ekstrak). Jika paket belum terpasang, build tetap sukses dan runtime otomatis memakai CDN (esm.sh lalu jsdelivr) — lihat `src/vrm/loader.ts`.
+- Jika yang tampil masih avatar lama/Live2D, itu deployment lama: pastikan build terbaru berhasil di Vercel (Deployments → log) dan hard refresh (Ctrl+Shift+R).
 - Jika model gagal dimuat/render kosong, avatar CSS tampil otomatis dan alasan gagal muncul di pojok kiri bawah (juga `window.__VRM_ERROR__` di console).

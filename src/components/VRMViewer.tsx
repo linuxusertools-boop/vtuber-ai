@@ -113,7 +113,8 @@ const VRMViewer = forwardRef<VRMViewerHandle, Props>(({ onLoad, onError, onProgr
       (window as any).__VRM_ERROR__ = msg;
       cbRef.current.onError?.(msg);
     };
-    const watchdog = window.setTimeout(() => { if (!finished) fail("timeout memuat model (45 dtk)"); }, 45000);
+    // timeout LUNAK: tampilkan cadangan tapi terus memuat; bila selesai kemudian, VRM menggantikannya
+    const watchdog = window.setTimeout(() => { if (!finished && !disposed) cbRef.current.onError?.("memuat model 3D lebih lama dari biasanya… tetap menunggu"); }, 30000);
     cleanups.push(() => clearTimeout(watchdog));
 
     (async () => {
@@ -162,15 +163,51 @@ const VRMViewer = forwardRef<VRMViewerHandle, Props>(({ onLoad, onError, onProgr
         // ── model ──
         const loader = new GLTFLoader();
         loader.register((p: any) => new V.VRMLoaderPlugin(p));
-        const load = () =>
-          new Promise<any>((res, rej) => {
-            const to = setTimeout(() => rej(new Error("timeout")), 90000);
-            loader.load(url, (g: any) => { clearTimeout(to); res(g); },
-              (e: any) => { if (e?.total) cbRef.current.onProgress?.(Math.min(99, Math.round((e.loaded / e.total) * 100))); },
-              (err: any) => { clearTimeout(to); rej(err); });
-          });
-        let gltf: any;
-        try { gltf = await load(); } catch { if (disposed) return; gltf = await load(); } // 1× coba ulang
+        // Unduh sendiri (progres akurat) + validasi: host SPA kadang membalas index.html (200) untuk file yang hilang
+        const abs = (u: string) => { try { return new URL(u, document.baseURI).href; } catch { return u; } };
+        const cands = Array.from(new Set([abs(url), abs("model/lilya/lilya_hat.vrm"), abs("/model/lilya/lilya_hat.vrm")]));
+        const expected = cfgNum(cfg.model, "bytes", 16545640);
+        const fetchModel = async (): Promise<ArrayBuffer> => {
+          const errs: string[] = [];
+          for (const u of cands) {
+            for (let attempt = 0; attempt < 2; attempt++) {
+              if (disposed) throw new Error("dibatalkan");
+              const ctrl = new AbortController();
+              const to = window.setTimeout(() => ctrl.abort(), 150000);
+              try {
+                const r = await fetch(u, { signal: ctrl.signal, cache: "force-cache" });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const total = Number(r.headers.get("content-length")) || expected;
+                const chunks: Uint8Array[] = [];
+                let got = 0;
+                if (r.body && r.body.getReader) {
+                  const rd = r.body.getReader();
+                  for (;;) {
+                    const { done, value } = await rd.read();
+                    if (done) break;
+                    chunks.push(value); got += value.length;
+                    cbRef.current.onProgress?.(Math.min(95, Math.round((got / total) * 95)));
+                  }
+                } else {
+                  const ab = await r.arrayBuffer(); chunks.push(new Uint8Array(ab)); got = ab.byteLength;
+                }
+                const buf = new Uint8Array(got);
+                let off = 0;
+                for (const c of chunks) { buf.set(c, off); off += c.length; }
+                const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
+                if (magic !== "glTF" || got < 4096) throw new Error(`bukan file VRM/GLB (diterima ${got} byte, awal "${magic.replace(/[^\x20-\x7e]/g, "?")}")`);
+                return buf.buffer;
+              } catch (e: any) {
+                errs.push(`${u.replace(location.origin, "")}: ${e?.message ?? e}`);
+              } finally {
+                clearTimeout(to);
+              }
+            }
+          }
+          throw new Error("file model tidak bisa diunduh → " + errs.join(" | "));
+        };
+        const parse = (buf: ArrayBuffer) => new Promise<any>((res, rej) => loader.parse(buf, "", res, rej));
+        const gltf: any = await parse(await fetchModel());
         if (disposed) { try { V.VRMUtils.deepDispose(gltf.scene); } catch { /* */ } return; }
         vrm = gltf.userData.vrm;
         if (!vrm) throw new Error("bukan file VRM");
