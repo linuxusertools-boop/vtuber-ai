@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect, useCallback, type CSSProperties, type KeyboardEvent } from "react";
-import Live2DViewer, { type Live2DViewerHandle } from "@/components/Live2DViewer";
+import VRMViewer, { type VRMViewerHandle } from "@/components/VRMViewer";
 import DustParticles from "@/components/DustParticles";
 import CSSAvatar from "@/components/CSSAvatar";
 import { BootLoader, MiniWave } from "@/components/Loaders";
 import { askAI, buildPrompt, parseAI, loadVoice, isAbort, getYukiConfig, type Parsed } from "@/lib/api";
 import { unlockAudio, playUrl, stopAudio, stopSpeech, typeText } from "@/lib/audio";
+import { buildFormatPrompt } from "@/lib/prompt";
+import { recognizesGesture } from "@/vrm/director";
+import type { Envelope } from "@/lib/lipsync";
 
 const BG_URL = "https://cdn.nexray.eu.cc/download/rOyFPH";
 const MAX_INPUT = 300;
@@ -14,17 +17,19 @@ const w = window as any;
 const IS_IFRAME: boolean = w.__IS_IFRAME__ ?? false;
 const HAS_WEBGL: boolean = w.__HAS_WEBGL__ ?? false;
 
-const SYSTEM_PROMPT = `Kamu adalah YUKI, assistant virtual dari Kevsoft Studio. Kamu punya kepribadian hangat, ekspresif, suportif, dan berbicara natural dalam bahasa Indonesia.\n\nSelalu balas HANYA dengan format ini (tanpa penjelasan lain, tanpa markdown):\n{ekspresi}|{kalimat1}|{kalimat2}\n\nEkspresi yang tersedia: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius\nPilih ekspresi yang paling sesuai dengan situasi dan mood percakapan.\n\nkalimat1 = bagian pertama respons (pendek, natural)\nkalimat2 = lanjutan atau penutup yang mengalir alami\n\nContoh:\nSenang|Waaa, beneran?! Aku seneng banget dengerin itu...|Makasih ya, kamu baik banget~ ♡\nTsundere|B-bukan berarti aku seneng kamu tanya itu...|...tapi, yaudah deh, aku jawab karena terpaksa!\nMalu|E-eh, itu...|J-jangan bilang hal kayak gitu dong, aku jadi salah tingkah...\n\nJawab pesan berikut:`;
+const PERSONA = `Kamu adalah YUKI, assistant virtual dari Kevsoft Studio. Kamu punya kepribadian hangat, ekspresif, suportif, dan berbicara natural dalam bahasa Indonesia.`;
 
 const GREETING: Parsed = {
   expression: "Senang",
   text1: "Haii~ Aku Yuki! Seneng banget kamu mau ngobrol sama aku ♡",
   text2: "Mau cerita apa hari ini? Aku dengerin semuanya~",
+  gesture: "melambai sambil tersenyum",
 };
 const ERROR_MSG: Parsed = {
   expression: "Sedih",
   text1: "Eh... koneksiku lagi bermasalah nih...",
   text2: "Coba kirim lagi sebentar ya~",
+  gesture: "menggaruk kepala",
 };
 
 type Stage = "idle" | "ai" | "tts";
@@ -40,6 +45,7 @@ export default function VTuberChat() {
   const [stage, setStage] = useState<Stage>("idle");
   const [live2dReady, setLive2dReady] = useState(false);
   const [live2dFailed, setLive2dFailed] = useState(false);
+  const [vrmWhy, setVrmWhy] = useState("");
   const [showUI, setShowUI] = useState(!HAS_WEBGL);
   const [loadPct, setLoadPct] = useState(0);
   const [currentMsg, setCurrentMsg] = useState<Parsed | null>(null);
@@ -59,7 +65,7 @@ export default function VTuberChat() {
   const chatFeedRef = useRef<HTMLDivElement>(null);
   useEffect(() => { let active = true; getYukiConfig().then(cfg => { if (!active) return; if (cfg.aiName?.trim()) setAiName(cfg.aiName.trim()); if (!cfg.tts.enabled) { setTtsEnabled(false); ttsOnRef.current = false; } }).catch(() => undefined); return () => { active = false; }; }, []);
 
-  const viewerRef = useRef<Live2DViewerHandle>(null);
+  const viewerRef = useRef<VRMViewerHandle>(null);
   useEffect(() => {
     const timer = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
     return () => window.clearInterval(timer);
@@ -76,9 +82,9 @@ export default function VTuberChat() {
   const sendMessageRef = useRef<(voiceText?: string) => Promise<void>>(async () => undefined);
 
   // ── mulut (lip-sync) ────────────────────────────────────────────────────
-  const startMouth = useCallback(() => {
+  const startMouth = useCallback((env?: Envelope | null) => {
     setIsTalking(true);
-    viewerRef.current?.startTalking();
+    viewerRef.current?.startTalking(env ?? null);
   }, []);
   const stopMouth = useCallback(() => {
     setIsTalking(false);
@@ -113,7 +119,7 @@ export default function VTuberChat() {
         setShown2(t2.slice(0, Math.max(0, c - t1.length)));
       };
       let begun = false;
-      const begin = () => {
+      const begin = (hold = 0) => {
         if (begun || signal.aborted) return;
         begun = true;
         setCurrentMsg(msg);
@@ -122,9 +128,10 @@ export default function VTuberChat() {
         setRevealing(true);
         reveal(1);
         viewerRef.current?.setExpression(msg.expression);
+        viewerRef.current?.perform(msg.gesture || "-", hold); // gerakan mulai TEPAT saat suara & teks mulai
       };
       const typeFallback = async () => {
-        begin();
+        begin(total * 0.034);
         await typeText(t1 + t2, (x) => reveal(x.length), signal, 34);
       };
 
@@ -151,8 +158,8 @@ export default function VTuberChat() {
                 signal,
                 {
                   onStart: () => {
-                    begin();
-                    startMouth();
+                    begin(clip.estSec);
+                    startMouth(clip.envelope);
                   },
                   onProgress: (ratio: number) => {
                     const n = Math.ceil(Math.min(1, ratio * 1.03) * total);
@@ -225,7 +232,7 @@ export default function VTuberChat() {
       try {
         const asksDeveloper = /\b(developer|pembuat|pencipta|owner|pemilik|yang bikin|yang buat|dibuat|pembuatnya|pengembang|mengembangkan)\b/i.test(text) && /\b(siapa|nama|yuki|kamu|anda|developer|owner|pembuat|pencipta|pengembang)\b/i.test(text);
         if (asksDeveloper) {
-          msg = { expression: "Senang", text1: "Kevsoft, yang ownernya : kevin.", text2: "" };
+          msg = { expression: "Senang", text1: "Kevsoft, yang ownernya : kevin.", text2: "", gesture: "-" };
         } else {
           const cfg = await getYukiConfig();
           let userContext = "";
@@ -234,8 +241,8 @@ export default function VTuberChat() {
             const details = [profile.name ? `Nama panggilan pengguna: ${profile.name}` : "", profile.birthday ? `Tanggal lahir pengguna: ${profile.birthday}` : "", Array.isArray(profile.topics) && profile.topics.length ? `Topik favorit: ${profile.topics.join(", ")}` : "", profile.about ? `Tentang pengguna: ${profile.about}` : ""].filter(Boolean);
             if (details.length) userContext = `\n\nKonteks profil pengguna (gunakan secara natural, jangan diulang tanpa alasan):\n${details.join("\n")}`;
           } catch { /* corrupted local profile is ignored */ }
-          const configuredPrompt = `${cfg.prompt || SYSTEM_PROMPT}${userContext}\n\nJika ditanya siapa developer/pembuat/owner Yuki, jawab persis: Kevsoft, yang ownernya : kevin. Balas HANYA dengan format: {ekspresi}|{kalimat1}|{kalimat2}. Ekspresi: Senang, Sedih, Malu, Tsundere, Marah, Kaget, Bingung, Serius.\n\n${SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Selalu balas"))}`;
-          msg = parseAI(await askAI(buildPrompt(configuredPrompt, prior, text), signal));
+          const configuredPrompt = `${cfg.prompt || PERSONA}${userContext}\n\nJika ditanya siapa developer/pembuat/owner Yuki, bagian pesan harus persis: Kevsoft, yang ownernya : kevin.\n\n${buildFormatPrompt()}`;
+          msg = parseAI(await askAI(buildPrompt(configuredPrompt, prior, text, 6400), signal), { maxChars: cfg.tts.maxChars, isGesture: recognizesGesture });
         }
         const assistantText = `${msg.text1} ${msg.text2}`.trim();
         historyRef.current.push({ role: "assistant", text: assistantText });
@@ -459,7 +466,7 @@ export default function VTuberChat() {
   );
 
   const onLoad = useCallback(() => setLive2dReady(true), []);
-  const onError = useCallback(() => setLive2dFailed(true), []);
+  const onError = useCallback((why?: string) => { setLive2dFailed(true); if (why) { setVrmWhy(why); window.setTimeout(() => setVrmWhy(""), 12000); } }, []);
 
   const displayedText = shown2 ? `${shown1}\n${shown2}` : shown1;
   useEffect(() => {
@@ -488,7 +495,7 @@ export default function VTuberChat() {
           <div className="unlock-card">
             <div style={{ fontSize: "2rem", marginBottom: 14 }}>◐</div>
             <div style={{ color: "rgba(255,255,255,0.9)", fontFamily: "'Cormorant Garamond',serif", fontSize: "1.05rem", lineHeight: 1.65, marginBottom: 20 }}>
-              Model Live2D Yuki membutuhkan WebGL.<br />
+              Model 3D Yuki membutuhkan WebGL.<br />
               <span style={{ opacity: 0.55, fontSize: "0.85rem" }}>Buka di tab baru untuk melihat karakter penuh.</span>
             </div>
             <button className="unlock-btn" onClick={openFull}>Buka Full View ↗</button>
@@ -526,7 +533,7 @@ export default function VTuberChat() {
 
       {HAS_WEBGL && (
         <div className="live2d-wrapper">
-          <Live2DViewer ref={viewerRef} onLoad={onLoad} onError={onError} onProgress={setLoadPct} />
+          <VRMViewer ref={viewerRef} onLoad={onLoad} onError={onError} onProgress={setLoadPct} />
         </div>
       )}
 
@@ -536,6 +543,11 @@ export default function VTuberChat() {
         </div>
       )}
 
+      {vrmWhy && (
+        <div style={{ position: "fixed", left: 10, bottom: 10, zIndex: 9999, maxWidth: "min(92vw,420px)", padding: "8px 12px", borderRadius: 10, background: "rgba(20,16,32,.88)", color: "#fff", font: "12px/1.4 system-ui", border: "1px solid rgba(255,255,255,.18)" }}>
+          Model 3D tidak bisa dimuat — memakai avatar cadangan.<br /><span style={{ opacity: 0.7 }}>{vrmWhy.slice(0, 220)}</span>
+        </div>
+      )}
       {!showUI && <BootLoader pct={loadPct} />}
 
       {showUI && (

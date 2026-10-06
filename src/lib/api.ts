@@ -108,16 +108,9 @@ export async function getYukiConfig(): Promise<YukiConfig> {
   return (configCache = normalizeConfig(raw));
 }
 
-export const EXPRESSIONS = [
-  "Senang", "Sedih", "Malu", "Tsundere", "Marah", "Kaget", "Bingung", "Serius",
-] as const;
-export type Expression = (typeof EXPRESSIONS)[number];
-
-export interface Parsed {
-  expression: Expression;
-  text1: string;
-  text2: string;
-}
+import { EXPRESSIONS, parseReply, type Expression, type Parsed, type ParseOpts } from "./parse";
+import { analyzeBlob, type Envelope } from "./lipsync";
+export { EXPRESSIONS, type Expression, type Parsed };
 
 export class AbortedError extends Error {
   constructor() {
@@ -259,81 +252,9 @@ export async function askAI(prompt: string, signal: AbortSignal): Promise<string
 }
 
 // ─── Parsing balasan AI → {ekspresi, kalimat1, kalimat2} ──────────────────────
-const MAX_LINE = 220;
 
-function stripMarkdown(s: string): string {
-  return s
-    .replace(/```[a-zA-Z]*\n?/g, "")
-    .replace(/```/g, "")
-    .replace(/\*\*|__|`/g, "")
-    .replace(/^#+\s*/gm, "")
-    .replace(/\r/g, "")
-    .replace(/^\s*(yuki|assistant)\s*:\s*/i, "")
-    .trim();
-}
-
-function clampLine(s: string, max = MAX_LINE): string {
-  const t = s.replace(/\s+/g, " ").trim();
-  if (t.length <= max) return t;
-  const cut = t.slice(0, max);
-  const i = Math.max(cut.lastIndexOf(" "), cut.lastIndexOf(","));
-  return (i > max * 0.5 ? cut.slice(0, i) : cut).trim() + "…";
-}
-
-function sentences(t: string): string[] {
-  const m = t.match(/[^.!?。！？…\n]+(?:[.!?。！？…]+|$)\s*/g);
-  return (m ?? [t]).map((s) => s.trim()).filter(Boolean);
-}
-
-function toTwoLines(text: string): [string, string] {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (!t) return ["", ""];
-  if (t.length <= 90) return [t, ""];
-  const sents = sentences(t);
-  if (sents.length < 2) {
-    const mid = t.lastIndexOf(" ", Math.floor(t.length / 2));
-    return mid > 20 ? [t.slice(0, mid), t.slice(mid + 1)] : [t, ""];
-  }
-  let best = 1;
-  let bestDiff = Infinity;
-  for (let i = 1; i < sents.length; i++) {
-    const a = sents.slice(0, i).join(" ").length;
-    const diff = Math.abs(t.length / 2 - a);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = i;
-    }
-  }
-  return [sents.slice(0, best).join(" "), sents.slice(best).join(" ")];
-}
-
-function matchExpression(s?: string): Expression | null {
-  if (!s) return null;
-  const k = s.replace(/[{}[\]()"'*:]/g, "").trim().toLowerCase();
-  return EXPRESSIONS.find((e) => e.toLowerCase() === k) ?? null;
-}
-
-function finish(expression: Expression, a: string, b: string): Parsed {
-  const text1 = clampLine(a);
-  const text2 = clampLine(b);
-  if (!text1) return { expression: "Bingung", text1: "Eh... aku lagi blank nih...", text2: "Coba tanya lagi ya~" };
-  return { expression, text1, text2 };
-}
-
-export function parseAI(raw: string): Parsed {
-  const t = stripMarkdown(raw ?? "");
-  const parts = t.split("|").map((p) => p.trim());
-  const exp = matchExpression(parts[0]);
-  if (exp && parts.length >= 2) {
-    const rest = parts.slice(1).filter(Boolean);
-    if (rest.length >= 2) return finish(exp, rest[0], rest.slice(1).join(" "));
-    if (rest.length === 1) {
-      const [a, b] = toTwoLines(rest[0]);
-      return finish(exp, a, b);
-    }
-  }
-  const [a, b] = toTwoLines(t.replace(/\|/g, " "));
-  return finish(exp ?? "Senang", a, b);
+export function parseAI(raw: string, opts?: ParseOpts): Parsed {
+  return parseReply(raw, opts);
 }
 
 // ─── TTS ──────────────────────────────────────────────────────────────────────
@@ -359,14 +280,16 @@ export interface VoiceClip {
   preloaded: boolean;
   /** perkiraan durasi (detik) bila metadata audio tidak tersedia */
   estSec: number;
+  /** envelope amplitudo untuk lip-sync (null = pakai mulut prosedural) */
+  envelope: Envelope | null;
   release: () => void;
 }
 
 // Cache kecil: kalimat yang sama (mis. sapaan) berikutnya instan.
-const clipCache = new Map<string, Blob>();
-function cachePut(key: string, blob: Blob) {
+const clipCache = new Map<string, { blob: Blob; env: Envelope | null }>();
+function cachePut(key: string, blob: Blob, env: Envelope | null) {
   clipCache.delete(key);
-  clipCache.set(key, blob);
+  clipCache.set(key, { blob, env });
   while (clipCache.size > 16) {
     const first = clipCache.keys().next().value;
     if (first === undefined) break;
@@ -423,9 +346,9 @@ async function downloadClip(url: string, ms: number, signal: AbortSignal, depth 
   }
 }
 
-function clipFromBlob(blob: Blob, estSec: number): VoiceClip {
+function clipFromBlob(blob: Blob, estSec: number, envelope: Envelope | null): VoiceClip {
   const src = URL.createObjectURL(blob);
-  return { src, preloaded: true, estSec, release: () => { try { URL.revokeObjectURL(src); } catch { /* abaikan */ } } };
+  return { src, preloaded: true, estSec, envelope, release: () => { try { URL.revokeObjectURL(src); } catch { /* abaikan */ } } };
 }
 
 /**
@@ -445,7 +368,7 @@ export async function loadVoice(text: string, signal: AbortSignal): Promise<Voic
   const estSec = Math.max(1.2, clean.length * 0.075);
 
   const cached = clipCache.get(clean);
-  if (cached) return clipFromBlob(cached, estSec);
+  if (cached) return clipFromBlob(cached.blob, cached.env?.duration ? Math.max(1, cached.env.duration) : estSec, cached.env);
 
   const direct = buildVoiceUrl(cfg.api.voice, clean);
   const proxy = cfg.api.voiceProxy
@@ -461,13 +384,15 @@ export async function loadVoice(text: string, signal: AbortSignal): Promise<Voic
       const blob = await downloadClip(u, Math.min(left, cfg.tts.attemptTimeoutMs), signal);
       if (signal.aborted) throw new AbortedError();
       if (blob) {
-        cachePut(clean, blob);
-        return clipFromBlob(blob, estSec);
+        const env = await analyzeBlob(blob, 2200); // tidak pernah melempar; null → mulut prosedural
+        if (signal.aborted) throw new AbortedError();
+        cachePut(clean, blob, env);
+        return clipFromBlob(blob, env?.duration ? env.duration : estSec, env);
       }
     }
     if (deadline - Date.now() < 1500) break;
     if (round < cfg.tts.retries) await sleep(300, signal);
   }
   // Strategi 3: serahkan ke elemen <audio> (tidak terikat CORS).
-  return { src: direct, preloaded: false, estSec, release: () => undefined };
+  return { src: direct, preloaded: false, estSec, envelope: null, release: () => undefined };
 }

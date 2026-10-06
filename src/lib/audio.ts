@@ -274,3 +274,12 @@ export function typeText(
     signal.addEventListener("abort", done, { once: true });
   });
 }
+
+/** Posisi putar audio TTS (detik) — dipakai lip-sync agar mulut mengikuti suara yang benar-benar terdengar. */
+export function audioTime(): number {
+  try {
+    return el && !el.paused ? el.currentTime : 0;
+  } catch {
+    return 0;
+  }
+}

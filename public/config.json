@@ -14,9 +14,43 @@
     "voice": "https://kev-tts.vercel.app/animemoe?text={text}",
     "voiceProxy": "/api/tts"
   },
-  "tts": { "enabled": true, "timeoutMs": 20000, "attemptTimeoutMs": 10000, "retries": 1, "maxChars": 240 },
+  "tts": {
+    "enabled": true,
+    "timeoutMs": 20000,
+    "attemptTimeoutMs": 10000,
+    "retries": 1,
+    "maxChars": 240
+  },
   "prompt": "Kamu adalah YUKI, assistant virtual yang hangat, cerdas, santai, suportif, dan berbicara dalam bahasa Indonesia secara natural. Gunakan profil pengguna hanya sebagai konteks, jangan mengarang fakta pribadi. Jika tidak tahu, katakan dengan jujur. Jawab ringkas tetapi membantu.",
-  "appearance": { "theme": "midnight", "animations": true, "particles": true },
-  "limits": { "maxInput": 300, "historyMessages": 8, "requestTimeoutMs": 22000 },
-  "features": { "onboarding": true, "voice": true, "memory": true, "dashboard": true }
+  "appearance": {
+    "theme": "midnight",
+    "animations": true,
+    "particles": true
+  },
+  "limits": {
+    "maxInput": 300,
+    "historyMessages": 8,
+    "requestTimeoutMs": 22000
+  },
+  "features": {
+    "onboarding": true,
+    "voice": true,
+    "memory": true,
+    "dashboard": true
+  },
+  "model": {
+    "url": "/model/lilya/lilya_hat.vrm"
+  },
+  "scene": {
+    "quality": "auto",
+    "light": 1.0,
+    "mist": 1.0,
+    "rays": 1.0,
+    "particles": 1.0,
+    "offsetY": 0.05
+  },
+  "motion": {
+    "subagent": true,
+    "timeoutMs": 7000
+  }
 }
